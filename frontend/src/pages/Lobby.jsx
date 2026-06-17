@@ -183,7 +183,7 @@ export default function Lobby({ room, currentPlayer, onLeave }) {
           url: inviteLink
         });
       } catch (err) {
-        console.log('Error sharing:', err);
+        console.error('Error sharing:', err);
       }
     }
   };

@@ -249,7 +249,6 @@ export default function registerGameHandlers(io, socket) {
       // Handle UNO penalty broadcast
       if (unoPenalizedPlayers && unoPenalizedPlayers.length > 0) {
         unoPenalizedPlayers.forEach(p => {
-          console.log('[UNO] Penalty applied for missing UNO');
           const targetSocket = io.sockets.sockets.get(p.socketId);
           if (targetSocket) {
             targetSocket.emit('cards_drawn_private', { cards: p.cards, isPenalty: true });
@@ -367,7 +366,6 @@ export default function registerGameHandlers(io, socket) {
       // Handle UNO penalty broadcast
       if (unoPenalizedPlayers && unoPenalizedPlayers.length > 0) {
         unoPenalizedPlayers.forEach(p => {
-          console.log('[UNO] Penalty applied for missing UNO');
           const targetSocket = io.sockets.sockets.get(p.socketId);
           if (targetSocket) {
             targetSocket.emit('cards_drawn_private', { cards: p.cards, isPenalty: true });

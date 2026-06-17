@@ -35,17 +35,13 @@ function MainApp() {
     if (!socket) return;
 
     const handleRoomUpdated = (room) => {
-      console.log('[DEBUG] App.jsx received room_updated event:', room);
       setCurrentRoom(room);
       setRoomCode(room.roomCode);
       
       // Identify current player using username
       const me = room.players.find(p => p.username === username);
       if (me) {
-        console.log('[DEBUG] Identified current player:', me);
         setCurrentPlayer(me);
-      } else {
-        console.warn('[DEBUG] Current player username not found in room players list:', username);
       }
 
       setLoadingState('');
@@ -53,7 +49,6 @@ function MainApp() {
     };
 
     const handleGameStarted = (data) => {
-      console.log('[DEBUG] App.jsx received game_started event:', data);
       if (data && data.isRestart) {
         setLoadingState('restarting');
       } else {
@@ -62,14 +57,12 @@ function MainApp() {
     };
 
     const handleGameStateSync = (state) => {
-      console.log('[DEBUG] App.jsx received game_state_sync event:', state);
       setCurrentGameState(state);
       setLoadingState('');
       setCurrentView('game');
     };
 
     const handleErrorMessage = (msg) => {
-      console.log('[DEBUG] App.jsx received error_message event:', msg);
       setLoadingState('');
       alert(`Error: ${msg}`);
     };
@@ -93,11 +86,10 @@ function MainApp() {
     try {
       const socketInstance = await connectSocket(name);
       setLoadingState('creating');
-      console.log('[DEBUG] Emitting create_room for host:', name);
       socketInstance.emit('create_room', { username: name });
     } catch (err) {
       setLoadingState('');
-      console.error('[DEBUG] Connect error in handleHost:', err);
+      console.error('Connect error in handleHost:', err);
       alert(`Connection failed: ${err.message || 'Cannot reach server'}`);
     }
   };
@@ -109,17 +101,15 @@ function MainApp() {
     try {
       const socketInstance = await connectSocket(name);
       setLoadingState('joining');
-      console.log('[DEBUG] Emitting join_room for code:', code, 'username:', name);
       socketInstance.emit('join_room', { roomCode: code, username: name });
     } catch (err) {
       setLoadingState('');
-      console.error('[DEBUG] Connect error in handleJoin:', err);
+      console.error('Connect error in handleJoin:', err);
       alert(`Connection failed: ${err.message || 'Cannot reach server'}`);
     }
   };
 
   const handleLeave = () => {
-    console.log('[DEBUG] Leaving room and resetting client state');
     disconnectSocket();
     setCurrentRoom(null);
     setCurrentGameState(null);

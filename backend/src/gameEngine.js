@@ -88,7 +88,6 @@ export function applyMissingUnoPenalties(gameState) {
   const unoPenalizedPlayers = [];
   gameState.players.forEach(p => {
     if (p.needsUnoCall && p.hand.length === 1 && !p.hasCalledUno) {
-      console.log('[UNO] Penalty applied for missing UNO');
       p.needsUnoCall = false;
       p.hasCalledUno = false;
       const cards = [];
@@ -197,8 +196,6 @@ export function executePlayCard(gameState, playerIndex, cardId, chosenColor) {
   if (player.hand.length === 1) {
     player.needsUnoCall = true;
     player.hasCalledUno = false;
-    console.log('[UNO] Player reached 1 card');
-    console.log('[UNO] UNO button enabled');
   } else {
     player.needsUnoCall = false;
     player.hasCalledUno = false;
@@ -303,16 +300,6 @@ export function executeDraw(gameState, playerIndex) {
     return { gameState, cardsDrawn: [], unoPenalizedPlayers };
   }
 
-  console.log("========== DRAW DEBUG ==========");
-  console.log("Player:", player.username);
-  console.log("Penalty Stack BEFORE DRAW:", gameState.penaltyStack);
-  console.log("Current Turn Index:", gameState.turnIndex);
-  console.log("Current Color:", gameState.currentColor);
-  console.log(
-    "Top Card:",
-    gameState.discardPile[gameState.discardPile.length - 1]
-  );
-
   // Case B: Resolving a penalty stack
   if (gameState.penaltyStack > 0) {
     const cardsDrawn = [];
@@ -321,16 +308,7 @@ export function executeDraw(gameState, playerIndex) {
     }
     player.hand.push(...cardsDrawn);
 
-    console.log(
-      `[PENALTY DRAW] ${player.username} drew ${cardsDrawn.length} cards`
-    );
-
     gameState.penaltyStack = 0;
-
-    console.log(
-      "Penalty Stack AFTER RESET:",
-      gameState.penaltyStack
-    );
 
     if (player.hand.length !== 1) {
       player.needsUnoCall = false;
@@ -348,9 +326,6 @@ export function executeDraw(gameState, playerIndex) {
   }
 
   // Case C: Normal draw action (Draws exactly 1 card when no active penalty exists)
-  console.log(
-    `[NORMAL DRAW] ${player.username} is drawing normally`
-  );
   const cardsDrawn = [];
   const card = drawCardFromDeck(gameState);
   cardsDrawn.push(card);
@@ -381,12 +356,6 @@ export function executeDraw(gameState, playerIndex) {
       gameState.turnIndex = getNextPlayerIndex(gameState, 1);
     }
   }
-
-  console.log(
-    `[DRAW COMPLETE] ${player.username} drew ${cardsDrawn.length} card(s)`
-  );
-
-  console.log("================================");
 
   return { gameState, cardsDrawn, unoPenalizedPlayers };
 }
@@ -488,6 +457,5 @@ export function executeCallUno(gameState, playerIndex) {
 
   player.hasCalledUno = true;
   player.needsUnoCall = false;
-  console.log('[UNO] UNO called successfully');
   return gameState;
 }
