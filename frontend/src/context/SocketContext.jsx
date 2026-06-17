@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState } from 'react';
-import { io } from 'socket.io-client';
+import React, { createContext, useContext, useState } from "react";
+import { io } from "socket.io-client";
 
 const SocketContext = createContext(null);
 
@@ -19,27 +19,29 @@ export function SocketProvider({ children }) {
         socket.disconnect();
       }
 
-      const serverUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
+      const serverUrl =
+        process.env.REACT_APP_BACKEND_URL || "http://localhost:5000";
 
       const socketInstance = io(serverUrl, {
         auth: { username },
         autoConnect: true,
-        reconnectionAttempts: 5
+        reconnectionAttempts: 5,
+        transports: ["websocket", "polling"],
       });
 
-      socketInstance.on('connect', () => {
+      socketInstance.on("connect", () => {
         setConnected(true);
         setError(null);
         resolve(socketInstance);
       });
 
-      socketInstance.on('disconnect', (reason) => {
+      socketInstance.on("disconnect", (reason) => {
         setConnected(false);
       });
 
-      socketInstance.on('connect_error', (err) => {
+      socketInstance.on("connect_error", (err) => {
         setConnected(false);
-        setError(err.message || 'Connection failed.');
+        setError(err.message || "Connection failed.");
         reject(err);
       });
 
@@ -57,48 +59,53 @@ export function SocketProvider({ children }) {
 
   const createRoom = (usernameVal) => {
     if (socket) {
-      socket.emit('create_room', { username: usernameVal });
+      socket.emit("create_room", { username: usernameVal });
     } else {
-      console.error('Cannot emit create_room: Socket is not initialized.');
+      console.error("Cannot emit create_room: Socket is not initialized.");
     }
   };
 
   const joinRoom = (roomCodeVal, usernameVal) => {
     if (socket) {
-      socket.emit('join_room', { roomCode: roomCodeVal, username: usernameVal });
+      socket.emit("join_room", {
+        roomCode: roomCodeVal,
+        username: usernameVal,
+      });
     } else {
-      console.error('Cannot emit join_room: Socket is not initialized.');
+      console.error("Cannot emit join_room: Socket is not initialized.");
     }
   };
 
   const toggleReady = () => {
     if (socket) {
-      socket.emit('toggle_ready');
+      socket.emit("toggle_ready");
     } else {
-      console.error('Cannot emit toggle_ready: Socket is not initialized.');
+      console.error("Cannot emit toggle_ready: Socket is not initialized.");
     }
   };
 
   const startGame = () => {
     if (socket) {
-      socket.emit('start_game');
+      socket.emit("start_game");
     } else {
-      console.error('Cannot emit start_game: Socket is not initialized.');
+      console.error("Cannot emit start_game: Socket is not initialized.");
     }
   };
 
   return (
-    <SocketContext.Provider value={{
-      socket,
-      connected,
-      error,
-      connectSocket,
-      disconnectSocket,
-      createRoom,
-      joinRoom,
-      toggleReady,
-      startGame
-    }}>
+    <SocketContext.Provider
+      value={{
+        socket,
+        connected,
+        error,
+        connectSocket,
+        disconnectSocket,
+        createRoom,
+        joinRoom,
+        toggleReady,
+        startGame,
+      }}
+    >
       {children}
     </SocketContext.Provider>
   );

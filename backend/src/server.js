@@ -13,12 +13,20 @@ const app = express();
 const server = http.createServer(app);
 
 // Express middleware
-app.use(cors());
+app.use(cors({
+  origin: process.env.CLIENT_URL,
+  credentials: true
+}));
 app.use(express.json());
 
 // Basic Health Check Route
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'healthy', timestamp: new Date() });
+});
+
+// Root Route
+app.get('/', (req, res) => {
+  res.send('UNO No Mercy Backend Running');
 });
 
 // Database Connection
