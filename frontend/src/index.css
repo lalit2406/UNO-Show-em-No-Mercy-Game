@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Hide scrollbars globally across the entire game */
+* {
+  scrollbar-width: none !important; /* Firefox */
+  -ms-overflow-style: none !important; /* IE / old Edge */
+}
+
+/* Chrome, Edge, Safari */
+*::-webkit-scrollbar {
+  width: 0px !important;
+  height: 0px !important;
+  background: transparent !important;
+  display: none !important;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: transparent !important;
+  border: none !important;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent !important;
+  border: none !important;
+}
+
+@keyframes scaleIn {
+  0% {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+

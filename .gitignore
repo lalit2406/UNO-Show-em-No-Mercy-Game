@@ -1,0 +1,69 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment Variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime files
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
+coverage/
+
+# Build folders
+build/
+dist/
+
+# Vite
+.vite/
+
+# Cache
+.cache/
+.parcel-cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary files
+tmp/
+temp/
+
+# Bun
+bun.lockb
+
+# React
+frontend/build/
+frontend/dist/
+
+# Backend uploads (if any)
+uploads/
+
+# MongoDB local database files
+*.mongodb
+
+# Render/Vercel files
+.vercel/
+.render/
+
+# Package lock backups
+package-lock.json.bak
