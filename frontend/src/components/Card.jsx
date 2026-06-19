@@ -52,7 +52,16 @@ const getCornerLabel = (type, value) => {
   return '';
 };
 
-export default function Card({ card, onClick, isPlayable = false, isHighlighted = false, hidden = false, size = 'md' }) {
+export default function Card({ 
+  card, 
+  onClick, 
+  isPlayable = false, 
+  isHighlighted = false, 
+  isMyTurn = false, 
+  isHandCard = false, 
+  hidden = false, 
+  size = 'md' 
+}) {
   if (hidden) {
     return <CardBack onClick={onClick} size={size} />;
   }
@@ -61,9 +70,9 @@ export default function Card({ card, onClick, isPlayable = false, isHighlighted 
   const design = COLOR_MAP[color] || COLOR_MAP.Wild;
 
   const sizeClasses = {
-    sm: 'w-10 h-14 sm:w-12 sm:h-18 md:w-14 md:h-20 text-[7px] sm:text-[8px] rounded-md shadow-sm',
-    md: 'w-22 h-32 sm:w-28 sm:h-42 md:w-32 md:h-48 text-xs sm:text-sm rounded-xl shadow-md',
-    lg: 'w-32 h-48 sm:w-40 sm:h-56 md:w-44 md:h-64 text-base sm:text-lg rounded-2xl shadow-xl'
+    sm: 'w-[48px] h-[72px] sm:w-[56px] sm:h-[84px] md:w-[64px] md:h-[96px] text-[7px] sm:text-[8px] rounded-md shadow-sm',
+    md: 'w-[88px] h-[128px] sm:w-[112px] sm:h-[168px] md:w-[128px] md:h-[192px] text-xs sm:text-sm rounded-xl shadow-md',
+    lg: 'w-[128px] h-[192px] sm:w-[160px] sm:h-[224px] md:w-[176px] md:h-[256px] text-base sm:text-lg rounded-2xl shadow-xl'
   };
 
   const interactiveClasses = (isPlayable || isHighlighted)
@@ -194,6 +203,28 @@ export default function Card({ card, onClick, isPlayable = false, isHighlighted 
     }
   };
 
+  // Base visual filters and opacity based on playability and turn active state
+  let opacityVal = 1.0;
+  let filterVal = 'none';
+
+  if (isHandCard) {
+    if (isMyTurn) {
+      if (isPlayable) {
+        opacityVal = 1.0;
+        filterVal = 'none';
+      } else {
+        opacityVal = 0.75; // Moderate dimming (instead of 0.5)
+        filterVal = 'brightness(0.8) saturate(0.8)'; // Moderate brightness/saturation reduction
+      }
+    } else {
+      opacityVal = 0.8; // Clearer visibility when not turn (instead of 0.6)
+      filterVal = 'brightness(0.8) saturate(0.85)'; // Moderate reduction
+    }
+  } else {
+    // For cards on the table, keep standard look
+    filterVal = (isPlayable || isHighlighted) ? 'none' : 'brightness(1.0)';
+  }
+
   const cardStyle = {
     borderColor: isHighlighted ? '#FBBF24' : isPlayable ? '#39FF88' : '#000000',
     boxShadow: isHighlighted
@@ -201,8 +232,9 @@ export default function Card({ card, onClick, isPlayable = false, isHighlighted 
       : isPlayable 
       ? '0 0 10px rgba(57,255,136,0.65), 0 0 22px rgba(57,255,136,0.45)' 
       : '0 2px 4px rgba(0,0,0,0.3)',
-    filter: (isPlayable || isHighlighted) ? 'none' : 'brightness(0.8) saturate(0.85)',
-    transition: 'border-color 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease'
+    filter: isHighlighted ? 'none' : filterVal,
+    opacity: opacityVal,
+    transition: 'border-color 0.25s ease, box-shadow 0.25s ease, filter 0.25s ease, opacity 0.25s ease'
   };
 
   return (
@@ -251,9 +283,9 @@ export default function Card({ card, onClick, isPlayable = false, isHighlighted 
 
 function CardBack({ onClick, size = 'md' }) {
   const sizeClasses = {
-    sm: 'w-10 h-14 sm:w-12 sm:h-18 md:w-14 md:h-20 rounded-md shadow-sm',
-    md: 'w-22 h-32 sm:w-28 sm:h-42 md:w-32 md:h-48 rounded-xl shadow-md',
-    lg: 'w-32 h-48 sm:w-40 sm:h-56 md:w-44 md:h-64 rounded-2xl shadow-xl'
+    sm: 'w-[48px] h-[72px] sm:w-[56px] sm:h-[84px] md:w-[64px] md:h-[96px] rounded-md shadow-sm',
+    md: 'w-[88px] h-[128px] sm:w-[112px] sm:h-[168px] md:w-[128px] md:h-[192px] rounded-xl shadow-md',
+    lg: 'w-[128px] h-[192px] sm:w-[160px] sm:h-[224px] md:w-[176px] md:h-[256px] rounded-2xl shadow-xl'
   };
 
   return (

@@ -160,9 +160,10 @@ const PARTICLES = Array.from({ length: 15 }).map((_, i) => ({
 }));
 
 export default function Lobby({ room, currentPlayer, onLeave }) {
-  const { toggleReady, startGame } = useSocket();
+  const { toggleReady, startGame, socket } = useSocket();
   const [copied, setCopied] = useState(false);
   const [inviteCopied, setInviteCopied] = useState(false);
+  const [playerToRemove, setPlayerToRemove] = useState(null);
 
   const players = room.players || [];
   const roomCode = room.roomCode;
@@ -208,8 +209,15 @@ export default function Lobby({ room, currentPlayer, onLeave }) {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleConfirmRemove = (player) => {
+    if (socket) {
+      const targetUserId = player.userId._id ? player.userId._id.toString() : player.userId.toString();
+      socket.emit('remove_player', { userId: targetUserId });
+    }
+  };
+
   return (
-    <div className="relative min-h-screen bg-slate-950 flex justify-center items-center p-6 text-white select-none overflow-hidden">
+    <div className="relative min-h-screen w-full max-w-full bg-slate-950 flex justify-center items-center p-6 text-white select-none overflow-hidden">
       <style dangerouslySetInnerHTML={{ __html: inlineStyles }} />
 
       {/* 1. Neon Glowing Streaks & Laser Lines */}
@@ -291,7 +299,12 @@ export default function Lobby({ room, currentPlayer, onLeave }) {
               {players.length} / 10
             </span>
           </div>
-          <PlayerList players={players} hostId={hostId} />
+          <PlayerList 
+            players={players} 
+            hostId={hostId} 
+            currentUserId={currentPlayerUserId} 
+            onRemovePlayer={(player) => setPlayerToRemove(player)} 
+          />
         </div>
 
         {/* Action Controls */}
@@ -334,6 +347,33 @@ export default function Lobby({ room, currentPlayer, onLeave }) {
           )}
         </div>
       </div>
+
+      {/* KICK CONFIRMATION MODAL */}
+      {playerToRemove && (
+        <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex justify-center items-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-sm w-full text-center shadow-2xl animate-[scaleIn_0.2s_ease-out_forwards]">
+            <h2 className="text-xl font-black tracking-wide text-white mb-2">Remove Player</h2>
+            <p className="text-slate-400 text-sm mb-6">Remove {playerToRemove.username} from this room?</p>
+            <div className="flex gap-4">
+              <button
+                onClick={() => setPlayerToRemove(null)}
+                className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold transition-all border border-slate-700 active:scale-95"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  handleConfirmRemove(playerToRemove);
+                  setPlayerToRemove(null);
+                }}
+                className="flex-1 py-3 rounded-xl bg-red-650 hover:bg-red-600 text-white font-black transition-all shadow-lg shadow-red-600/20 active:scale-95"
+              >
+                Remove Player
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

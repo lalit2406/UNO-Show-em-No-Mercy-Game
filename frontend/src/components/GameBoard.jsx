@@ -4,6 +4,7 @@ import Card from './Card';
 import Opponents from './Opponents';
 import PlayerHand from './PlayerHand';
 import soundManager from '../utils/soundManager';
+import Confetti from './Confetti';
 
 const COLOR_CODES = {
   Red: 'bg-red-500 hover:bg-red-600 shadow-red-500/20',
@@ -37,15 +38,77 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
   const [logs, setLogs] = useState([{ id: 'start-log', text: '🎮 Host started a new match!' }]);
   const [showRestartConfirm, setShowRestartConfirm] = useState(false);
   const [pendingWildCard, setPendingWildCard] = useState(null); // Card waiting for color selection
+  const [pendingWildDragPos, setPendingWildDragPos] = useState(null); // Track custom drag position for wild animation
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [privateDrawnCards, setPrivateDrawnCards] = useState([]); // Visual popup of drawn cards
   const [showMobileLog, setShowMobileLog] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(soundManager.isEnabled());
   const [soundVolume, setSoundVolume] = useState(soundManager.getVolume());
   const [lastDrawnCardId, setLastDrawnCardId] = useState(null);
+  const [playerToRemove, setPlayerToRemove] = useState(null);
   const logsEndRef = useRef(null);
   const mobileLogsEndRef = useRef(null);
   const usernameRef = useRef('');
+
+  // Animations State
+  const [animatingCards, setAnimatingCards] = useState([]);
+  const [animatingCardIds, setAnimatingCardIds] = useState(new Set());
+  const privateDrawnTimerRef = useRef(null);
+  const [screenWidth, setScreenWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1000);
+
+  useEffect(() => {
+    const handleResize = () => setScreenWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const getElementCenter = (id) => {
+    const el = document.getElementById(id);
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    return {
+      x: rect.left + rect.width / 2 + window.scrollX,
+      y: rect.top + rect.height / 2 + window.scrollY,
+      width: rect.width,
+      height: rect.height
+    };
+  };
+
+  const addCardAnimation = ({ card, startX, startY, endX, endY, duration, rotation, scale, hidden, size }) => {
+    const animId = Math.random().toString(36).substring(2, 9);
+    const newAnim = {
+      id: animId,
+      card,
+      currentX: startX,
+      currentY: startY,
+      scale: 1,
+      rotation: 0,
+      opacity: 1,
+      hidden,
+      size,
+      width: size === 'sm' ? '56px' : '88px',
+      height: size === 'sm' ? '84px' : '128px'
+    };
+
+    setAnimatingCards(prev => [...prev, newAnim]);
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setAnimatingCards(prev =>
+          prev.map(anim =>
+            anim.id === animId
+              ? { ...anim, currentX: endX, currentY: endY, scale, rotation, opacity: 0.9 }
+              : anim
+          )
+        );
+      });
+    });
+
+    setTimeout(() => {
+      setAnimatingCards(prev => prev.filter(anim => anim.id !== animId));
+    }, duration);
+  };
+
 
   useEffect(() => {
     if (!socket) return;
@@ -64,6 +127,62 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
           if (isMyTurn && !wasMyTurn && state.status !== 'finished') {
             soundManager.playYourTurn();
           }
+
+          // --- DETECT CARDS DRAWN BY LOCAL PLAYER ---
+          const prevMyState = prev.players.find(
+            p => p.userId.toString() === myUserId || (p.userId._id && p.userId._id.toString() === myUserId)
+          );
+          const newMyState = state.players.find(
+            p => p.userId.toString() === myUserId || (p.userId._id && p.userId._id.toString() === myUserId)
+          );
+
+          if (prevMyState && newMyState) {
+            const prevHandIds = new Set(prevMyState.hand.map(c => c.id));
+            const newlyDrawn = newMyState.hand.filter(c => !prevHandIds.has(c.id));
+
+            if (newlyDrawn.length > 0) {
+              const drawDeckCenter = getElementCenter('draw-deck-pile');
+              const startX = drawDeckCenter ? drawDeckCenter.x - drawDeckCenter.width / 2 : window.innerWidth / 2 - 44;
+              const startY = drawDeckCenter ? drawDeckCenter.y - drawDeckCenter.height / 2 : window.innerHeight / 2 - 64;
+
+              // Hide from player hand container temporarily
+              setAnimatingCardIds(prevIds => {
+                const next = new Set(prevIds);
+                newlyDrawn.forEach(c => next.add(c.id));
+                return next;
+              });
+
+              newlyDrawn.forEach((card, idx) => {
+                setTimeout(() => {
+                  const handContainer = getElementCenter('player-hand-container');
+                  const endX = handContainer ? handContainer.x - 44 : window.innerWidth / 2 - 44;
+                  const endY = handContainer ? handContainer.y - 64 : window.innerHeight - 150;
+
+                  addCardAnimation({
+                    card,
+                    startX,
+                    startY,
+                    endX,
+                    endY,
+                    duration: 200,
+                    rotation: Math.random() * 20 - 10,
+                    scale: 0.95,
+                    hidden: false,
+                    size: screenWidth < 640 ? 'sm' : 'md'
+                  });
+
+                  // Make card visible in fanned hand
+                  setTimeout(() => {
+                    setAnimatingCardIds(prevIds => {
+                      const next = new Set(prevIds);
+                      next.delete(card.id);
+                      return next;
+                    });
+                  }, 200);
+                }, idx * 50); // Stagger 50ms per card
+              });
+            }
+          }
         }
         return state;
       });
@@ -80,8 +199,20 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
 
     const handlePrivateDrawn = ({ cards, isPenalty }) => {
       if (!cards || cards.length === 0) return;
-      setPrivateDrawnCards(cards);
-      setTimeout(() => setPrivateDrawnCards([]), 3500); // Auto close after 3.5s
+
+      if (privateDrawnTimerRef.current) {
+        clearTimeout(privateDrawnTimerRef.current);
+      }
+
+      // Display overlay only for penalty or multiple draws
+      if (cards.length > 1 || isPenalty) {
+        setPrivateDrawnCards(cards);
+        privateDrawnTimerRef.current = setTimeout(() => {
+          setPrivateDrawnCards([]);
+        }, 1200);
+      } else {
+        setPrivateDrawnCards([]);
+      }
       
       if (cards.length === 1 && !isPenalty) {
         setLastDrawnCardId(cards[0].id);
@@ -93,6 +224,30 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
     const handleCardPlayed = ({ username, card, currentColor }) => {
       addLog(`${username} played ${card.color === 'Wild' ? 'Wild' : card.color} ${card.type === 'number' ? card.value : card.type.replace('_', ' ')} (Color is now ${currentColor})`);
       
+      // Animate flight path for opponent plays
+      if (username !== usernameRef.current) {
+        const opponentAvatarPos = getElementCenter(`opponent-avatar-${username}`);
+        const discardPos = getElementCenter('discard-pile');
+
+        const startX = opponentAvatarPos ? opponentAvatarPos.x - 28 : window.innerWidth / 2;
+        const startY = opponentAvatarPos ? opponentAvatarPos.y - 28 : 50;
+        const endX = discardPos ? discardPos.x - discardPos.width / 2 : window.innerWidth / 2 + 50;
+        const endY = discardPos ? discardPos.y - discardPos.height / 2 : window.innerHeight / 2 - 80;
+
+        addCardAnimation({
+          card,
+          startX,
+          startY,
+          endX,
+          endY,
+          duration: 300,
+          rotation: Math.random() * 30 - 15,
+          scale: 0.85,
+          hidden: false,
+          size: 'sm'
+        });
+      }
+
       if (card.type === 'reverse') {
         soundManager.playReverse();
       } else if (card.type === 'skip' || card.type === 'skip_everyone') {
@@ -114,6 +269,34 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
       const action = isPenalty ? `drew ${count} penalty cards` : `drew ${count} cards`;
       addLog(`${username} ${action}${wasEliminated ? ' and was ELIMINATED!' : '.'}`);
       
+      // Animate flight path for opponent draws
+      if (username !== usernameRef.current) {
+        const drawDeckPos = getElementCenter('draw-deck-pile');
+        const opponentAvatarPos = getElementCenter(`opponent-avatar-${username}`);
+
+        const startX = drawDeckPos ? drawDeckPos.x - drawDeckPos.width / 2 : window.innerWidth / 2 - 44;
+        const startY = drawDeckPos ? drawDeckPos.y - drawDeckPos.height / 2 : window.innerHeight / 2 - 64;
+        const endX = opponentAvatarPos ? opponentAvatarPos.x - 20 : window.innerWidth / 2;
+        const endY = opponentAvatarPos ? opponentAvatarPos.y - 20 : 50;
+
+        for (let i = 0; i < count; i++) {
+          setTimeout(() => {
+            addCardAnimation({
+              card: {},
+              startX,
+              startY,
+              endX,
+              endY,
+              duration: 200,
+              rotation: Math.random() * 20 - 10,
+              scale: 0.5,
+              hidden: true,
+              size: 'sm'
+            });
+          }, i * 50);
+        }
+      }
+
       if (isPenalty) {
         soundManager.playPenalty();
       } else {
@@ -162,6 +345,12 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
       addLog(`${emoji} ${username} finished in ${rank}${suffix} place!`);
     };
 
+    const handlePlayerRemoved = ({ username }) => {
+      addLog(`⚠️ ${username} was removed by the host.`);
+      setErrorMessage(`${username} was removed by the host.`);
+      setTimeout(() => setErrorMessage(null), 4500);
+    };
+
     socket.on('game_state_sync', handleSync);
     socket.on('cards_drawn_private', handlePrivateDrawn);
     socket.on('card_played', handleCardPlayed);
@@ -173,6 +362,7 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
     socket.on('uno_called', handleUnoCalled);
     socket.on('uno_penalty', handleUnoPenalty);
     socket.on('player_finished', handlePlayerFinished);
+    socket.on('player_removed', handlePlayerRemoved);
 
     return () => {
       socket.off('game_state_sync', handleSync);
@@ -186,6 +376,10 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
       socket.off('uno_called', handleUnoCalled);
       socket.off('uno_penalty', handleUnoPenalty);
       socket.off('player_finished', handlePlayerFinished);
+      socket.off('player_removed', handlePlayerRemoved);
+      if (privateDrawnTimerRef.current) {
+        clearTimeout(privateDrawnTimerRef.current);
+      }
     };
   }, [socket]);
 
@@ -224,6 +418,13 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
     setShowRestartConfirm(false);
     if (socket) {
       socket.emit('restart_game');
+    }
+  };
+
+  const handleConfirmRemove = (player) => {
+    if (socket) {
+      const targetUserId = player.userId._id ? player.userId._id.toString() : player.userId.toString();
+      socket.emit('remove_player', { userId: targetUserId });
     }
   };
 
@@ -270,19 +471,94 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
     });
   }
 
-  const handleCardClick = (card) => {
+  const handleCardClick = (card, dragStartPos = null) => {
     if (card.color === 'Wild') {
       setPendingWildCard(card);
+      setPendingWildDragPos(dragStartPos);
       setShowColorPicker(true);
     } else {
+      // Optimistic play card animation for non-wild cards
+      const handCardPos = getElementCenter('hand-card-' + card.id);
+      const discardPos = getElementCenter('discard-pile');
+
+      const startX = dragStartPos ? dragStartPos.x : (handCardPos ? handCardPos.x - handCardPos.width / 2 : window.innerWidth / 2 - 44);
+      const startY = dragStartPos ? dragStartPos.y : (handCardPos ? handCardPos.y - handCardPos.height / 2 : window.innerHeight - 150);
+      const endX = discardPos ? discardPos.x - discardPos.width / 2 : window.innerWidth / 2 + 50;
+      const endY = discardPos ? discardPos.y - discardPos.height / 2 : window.innerHeight / 2 - 80;
+
+      setAnimatingCardIds(prev => {
+        const next = new Set(prev);
+        next.add(card.id);
+        return next;
+      });
+
+      addCardAnimation({
+        card,
+        startX,
+        startY,
+        endX,
+        endY,
+        duration: 300,
+        rotation: Math.random() * 30 - 15,
+        scale: 0.9,
+        hidden: false,
+        size: screenWidth < 640 ? 'sm' : 'md'
+      });
+
+      setTimeout(() => {
+        setAnimatingCardIds(prev => {
+          const next = new Set(prev);
+          next.delete(card.id);
+          return next;
+        });
+      }, 300);
+
       socket.emit('play_card', { cardId: card.id });
     }
   };
 
   const handleColorSelected = (color) => {
     if (pendingWildCard) {
+      const card = pendingWildCard;
+      // Optimistic play card animation for wild cards after color choice
+      const handCardPos = getElementCenter('hand-card-' + card.id);
+      const discardPos = getElementCenter('discard-pile');
+
+      const startX = pendingWildDragPos ? pendingWildDragPos.x : (handCardPos ? handCardPos.x - handCardPos.width / 2 : window.innerWidth / 2 - 44);
+      const startY = pendingWildDragPos ? pendingWildDragPos.y : (handCardPos ? handCardPos.y - handCardPos.height / 2 : window.innerHeight - 150);
+      const endX = discardPos ? discardPos.x - discardPos.width / 2 : window.innerWidth / 2 + 50;
+      const endY = discardPos ? discardPos.y - discardPos.height / 2 : window.innerHeight / 2 - 80;
+
+      setAnimatingCardIds(prev => {
+        const next = new Set(prev);
+        next.add(card.id);
+        return next;
+      });
+
+      addCardAnimation({
+        card,
+        startX,
+        startY,
+        endX,
+        endY,
+        duration: 300,
+        rotation: Math.random() * 30 - 15,
+        scale: 0.9,
+        hidden: false,
+        size: screenWidth < 640 ? 'sm' : 'md'
+      });
+
+      setTimeout(() => {
+        setAnimatingCardIds(prev => {
+          const next = new Set(prev);
+          next.delete(card.id);
+          return next;
+        });
+      }, 300);
+
       socket.emit('play_card', { cardId: pendingWildCard.id, chosenColor: color });
       setPendingWildCard(null);
+      setPendingWildDragPos(null);
       setShowColorPicker(false);
     }
   };
@@ -294,22 +570,24 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex flex-col justify-between text-white font-sans relative">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex flex-col justify-between text-white font-sans relative">
       {/* 1. TOP HEADER */}
-      <header className="bg-slate-900/80 border-b border-slate-800 p-4 flex justify-between items-center z-10">
-        <div className="flex items-center gap-4">
-          <span className="font-black text-xl tracking-tighter text-red-500 italic">UNO NO MERCY</span>
-          <div className="bg-slate-800 px-3 py-1 rounded-full text-xs font-bold border border-slate-700">
+      <header className="bg-slate-900/80 border-b border-slate-800 p-3 sm:p-4 flex flex-col sm:flex-row justify-between items-center gap-3 sm:gap-4 z-10 w-full max-w-full">
+        {/* Row 1: Logo & Room Code */}
+        <div className="flex w-full sm:w-auto justify-between items-center gap-4">
+          <span className="font-black text-lg sm:text-xl tracking-tighter text-red-500 italic uppercase">UNO NO MERCY</span>
+          <div className="bg-slate-800 px-3 py-1 rounded-full text-[10px] sm:text-xs font-bold border border-slate-700 whitespace-nowrap">
             Room Code: <span className="text-yellow-400 font-extrabold">{roomCode}</span>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        {/* Row 2: Controls */}
+        <div className="flex w-full sm:w-auto justify-between sm:justify-start items-center gap-2 sm:gap-3">
           {/* Audio Controls */}
-          <div className="flex items-center gap-2 bg-slate-800 px-2.5 py-1.5 rounded-lg border border-slate-700 select-none">
+          <div className="flex items-center gap-1.5 sm:gap-2 bg-slate-800 px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-lg border border-slate-700 select-none">
             <button
               onClick={toggleSound}
-              className="text-xs font-bold text-slate-200 hover:text-white flex items-center gap-1 min-w-[50px] transition-colors"
+              className="text-[10px] sm:text-xs font-bold text-slate-200 hover:text-white flex items-center gap-0.5 sm:gap-1 min-w-[42px] sm:min-w-[50px] transition-colors"
               title={soundEnabled ? 'Mute Sound' : 'Unmute Sound'}
             >
               {soundEnabled ? '🔊 ON' : '🔇 OFF'}
@@ -321,7 +599,7 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
               step="0.05"
               value={soundVolume}
               onChange={handleVolumeChange}
-              className="w-16 sm:w-20 h-1 bg-slate-600 rounded appearance-none cursor-pointer accent-red-500"
+              className="w-12 xs:w-16 sm:w-20 h-1 bg-slate-600 rounded appearance-none cursor-pointer accent-red-500"
               title="Sound Volume"
             />
           </div>
@@ -329,14 +607,14 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
           {/* Log Toggle Button (Mobile only) */}
           <button
             onClick={() => setShowMobileLog(true)}
-            className="md:hidden px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold transition-all border border-slate-700 flex items-center gap-1 text-slate-200"
+            className="md:hidden px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] sm:text-xs font-bold transition-all border border-slate-700 flex items-center gap-1 text-slate-200 whitespace-nowrap"
           >
             📋 Log
           </button>
           
           <button
             onClick={onLeaveRoom}
-            className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold transition-all border border-slate-700"
+            className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] sm:text-xs font-bold transition-all border border-slate-700 whitespace-nowrap"
           >
             Leave Match
           </button>
@@ -345,7 +623,13 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
 
       {/* 2. OPPONENTS SECTION */}
       <section className="py-2 bg-slate-950/20">
-        <Opponents players={gameState.players} currentTurnIndex={gameState.turnIndex} myUserId={myUserId} />
+        <Opponents 
+          players={gameState.players} 
+          currentTurnIndex={gameState.turnIndex} 
+          myUserId={myUserId} 
+          isHost={isHost}
+          onRemovePlayer={(opponent) => setPlayerToRemove(opponent)}
+        />
       </section>
 
       {/* 3. CENTER PLAY AREA GRID */}
@@ -380,18 +664,18 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
 
                   return (
                     <div key={opponent.userId._id || opponent.userId} className="flex justify-between items-center py-0.5">
-                      <div className="flex items-center gap-1.5 min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">
                         <span className="text-slate-500 text-xs">👤</span>
                         <span className={`truncate font-medium ${isCurrentTurn ? 'text-red-400 font-bold' : 'text-slate-200'}`} title={opponent.username}>
                           {opponent.username}
                         </span>
                         {isUno && !isEliminated && (
-                          <span className="text-[10px] font-black bg-red-600 text-white px-1.5 py-0.5 rounded animate-pulse tracking-wide flex items-center gap-0.5">
+                          <span className="text-[10px] font-black bg-red-600 text-white px-1.5 py-0.5 rounded animate-pulse tracking-wide flex items-center gap-0.5 flex-shrink-0">
                             ⚠️ UNO
                           </span>
                         )}
                       </div>
-                      <div>
+                      <div className="flex items-center gap-2">
                         {isEliminated ? (
                           <span className="text-[9px] font-black text-red-500/80 uppercase tracking-wider">💀 ELIMINATED</span>
                         ) : (
@@ -404,6 +688,16 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
                           }`}>
                             {handCount}
                           </span>
+                        )}
+
+                        {isHost && (
+                          <button
+                            onClick={() => setPlayerToRemove(opponent)}
+                            className="px-1.5 py-0.5 rounded bg-red-650/20 hover:bg-red-600 text-red-400 hover:text-white border border-red-600/30 text-[9px] font-black uppercase transition-all duration-200 flex-shrink-0"
+                            title={`Remove ${opponent.username}`}
+                          >
+                            🚫 Kick
+                          </button>
                         )}
                       </div>
                     </div>
@@ -468,7 +762,7 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
             {/* Draw Deck Stack */}
             <div className="flex flex-col items-center gap-1.5">
               <span className="text-xs font-bold text-slate-500">Draw Deck</span>
-              <div className="relative">
+              <div id="draw-deck-pile" className="relative">
                 <Card
                   hidden
                   size="md"
@@ -496,9 +790,9 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
             {/* Discard Pile Stack */}
             <div className="flex flex-col items-center gap-1.5">
               <span className="text-xs font-bold text-slate-500">Discard Pile</span>
-              <div className="relative">
+              <div id="discard-pile" className="relative">
                 {/* Pre-drawn under-stacking shadow cards */}
-                <div className="absolute top-1 left-1 w-22 h-32 sm:w-28 sm:h-42 md:w-32 md:h-48 bg-slate-900 border border-slate-800 rounded-xl -z-10 rotate-3"></div>
+                <div className="absolute top-1 left-1 w-[88px] h-[128px] sm:w-[112px] sm:h-[168px] md:w-[128px] md:h-[192px] bg-slate-900 border border-slate-800 rounded-xl -z-10 rotate-3"></div>
                 <Card card={topCard} size="md" />
               </div>
             </div>
@@ -547,7 +841,15 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
 
       {/* 4. PRIVATE DRAWN CARD POPUP MODAL */}
       {privateDrawnCards.length > 0 && (
-        <div className="absolute inset-0 z-40 bg-black/70 backdrop-blur-sm flex flex-col justify-center items-center gap-4">
+        <div 
+          onClick={() => {
+            setPrivateDrawnCards([]);
+            if (privateDrawnTimerRef.current) {
+              clearTimeout(privateDrawnTimerRef.current);
+            }
+          }}
+          className="absolute inset-0 z-40 bg-black/70 backdrop-blur-sm flex flex-col justify-center items-center gap-4 cursor-pointer select-none"
+        >
           <h2 className="text-2xl font-black text-yellow-400 tracking-wide animate-pulse">
             YOU DREW {privateDrawnCards.length} {privateDrawnCards.length === 1 ? 'CARD' : 'CARDS'}!
           </h2>
@@ -563,8 +865,8 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
 
       {/* 5. COLOR PICKER DIALOG */}
       {showColorPicker && (
-        <div className="absolute inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex justify-center items-center">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl flex flex-col items-center">
+        <div className="absolute inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex justify-center items-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-sm w-full text-center shadow-2xl flex flex-col items-center">
             <h2 className="text-xl font-black tracking-wide text-white mb-2">CHOOSE COLOR</h2>
             <p className="text-slate-400 text-xs mb-6">Select a color to set the active color for play.</p>
 
@@ -595,12 +897,21 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
 
       {/* 6. GAME OVER OVERLAY */}
       {gameState.status === 'finished' && (
-        <div className="absolute inset-0 z-50 bg-black/90 flex flex-col justify-center items-center text-center p-6">
-          <div className="animate-bounce text-6xl mb-4">🏆</div>
-          <h1 className="text-5xl font-black tracking-tight text-yellow-400 uppercase italic">MATCH FINISHED!</h1>
+        <div className="absolute inset-0 z-50 bg-black/95 flex flex-col justify-center items-center text-center p-4 sm:p-6 overflow-y-auto">
+          {/* Confetti Explosion */}
+          <Confetti />
+
+          {/* Glowing Trophy */}
+          <div className="text-6xl sm:text-7xl mb-4 animate-[float-trophy_3s_ease-in-out_infinite] filter drop-shadow-[0_0_20px_rgba(251,191,36,0.6)]">
+            🏆
+          </div>
+          
+          <h1 className="text-4xl sm:text-5xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-yellow-300 to-red-500 uppercase italic animate-[scaleIn_0.4s_ease-out_forwards] drop-shadow-[0_2px_10px_rgba(0,0,0,0.5)]">
+            MATCH FINISHED!
+          </h1>
           
           {/* Leaderboard list */}
-          <div className="mt-8 max-w-sm w-full bg-slate-900/60 border border-slate-800 rounded-3xl p-6 flex flex-col gap-3 shadow-xl">
+          <div className="mt-8 max-w-sm w-full bg-slate-900/80 border border-slate-800 rounded-3xl p-6 flex flex-col gap-3 shadow-2xl ring-1 ring-white/10 animate-[scaleIn_0.5s_ease-out_forwards]">
             <h2 className="text-xs font-black text-slate-500 uppercase tracking-widest text-left mb-2">🏆 Final Results</h2>
             {gameState.players
               .filter(p => p.finishedRank > 0)
@@ -611,14 +922,21 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
                 const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : '4️⃣';
                 
                 return (
-                  <div key={player.userId._id || player.userId} className="flex justify-between items-center py-2 px-3 bg-slate-950/40 rounded-xl border border-slate-800/40 text-left">
+                  <div 
+                    key={player.userId._id || player.userId} 
+                    className={`flex justify-between items-center py-2.5 px-3 rounded-xl border text-left transition-all ${
+                      rank === 1 
+                        ? 'bg-yellow-500/10 border-yellow-500/35 animate-[pulse-glow_3s_infinite]' 
+                        : 'bg-slate-950/60 border-slate-800/40'
+                    }`}
+                  >
                     <div className="flex items-center gap-3 min-w-0">
                       <span className="text-2xl">{medal}</span>
-                      <span className={`truncate font-bold ${isSelf ? 'text-yellow-400' : 'text-slate-200'}`}>
+                      <span className={`truncate font-bold ${isSelf ? 'text-yellow-400 font-bold' : 'text-slate-200'}`}>
                         {player.username} {isSelf && '(You)'}
                       </span>
                     </div>
-                    <span className="text-xs font-extrabold text-slate-400">
+                    <span className={`text-xs font-extrabold ${rank === 1 ? 'text-yellow-450' : 'text-slate-400'}`}>
                       {rank === 1 ? '1st' : rank === 2 ? '2nd' : rank === 3 ? '3rd' : `${rank}th`} Place
                     </span>
                   </div>
@@ -627,22 +945,22 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
           </div>
 
           {isHost ? (
-            <div className="flex flex-col sm:flex-row gap-4 mt-10">
+            <div className="flex flex-col sm:flex-row gap-4 mt-10 z-10">
               <button
                 onClick={() => setShowRestartConfirm(true)}
-                className="px-8 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-black font-black text-lg transition-all shadow-xl shadow-emerald-500/25 hover:scale-105 active:scale-95 flex items-center gap-1.5"
+                className="px-8 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-black font-black text-lg transition-all shadow-xl shadow-emerald-500/25 hover:scale-105 active:scale-95 flex items-center gap-1.5 animate-[scaleIn_0.55s_ease-out_forwards]"
               >
                 🔄 Play Again
               </button>
               <button
                 onClick={onLeaveRoom}
-                className="px-8 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-black text-lg transition-all border border-slate-700 hover:scale-105 active:scale-95"
+                className="px-8 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-black text-lg transition-all border border-slate-700 hover:scale-105 active:scale-95 animate-[scaleIn_0.55s_ease-out_forwards]"
               >
                 Return to Lobby
               </button>
             </div>
           ) : (
-            <div className="flex flex-col gap-2 items-center mt-10">
+            <div className="flex flex-col gap-2 items-center mt-10 z-10">
               <p className="text-slate-400 text-xs italic animate-pulse">Waiting for host to restart or close room...</p>
               <button
                 onClick={onLeaveRoom}
@@ -679,9 +997,36 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
         </div>
       )}
 
+      {/* KICK CONFIRMATION MODAL */}
+      {playerToRemove && (
+        <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex justify-center items-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-sm w-full text-center shadow-2xl animate-[scaleIn_0.2s_ease-out_forwards]">
+            <h2 className="text-xl font-black tracking-wide text-white mb-2">Remove Player</h2>
+            <p className="text-slate-400 text-sm mb-6">Remove {playerToRemove.username} from this room?</p>
+            <div className="flex gap-4">
+              <button
+                onClick={() => setPlayerToRemove(null)}
+                className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold transition-all border border-slate-700 active:scale-95"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  handleConfirmRemove(playerToRemove);
+                  setPlayerToRemove(null);
+                }}
+                className="flex-1 py-3 rounded-xl bg-red-650 hover:bg-red-600 text-white font-black transition-all shadow-lg shadow-red-600/20 active:scale-95"
+              >
+                Remove Player
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 7. BOTTOM ACTIVE HAND OR SPECTATOR BANNER */}
       {myPlayerState && !myPlayerState.isEliminated && (
-        <section className="z-10">
+        <section className="relative z-20">
           {myPlayerState.finishedRank > 0 ? (
             <div className="bg-slate-900/90 backdrop-blur-md border-t border-slate-800 p-6 flex flex-col justify-center items-center gap-2 select-none shadow-2xl relative">
               <div className="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2 px-4 py-1.5 rounded-full bg-emerald-500 text-black text-xs font-black uppercase tracking-widest border border-slate-900 shadow-lg shadow-emerald-500/20">
@@ -705,6 +1050,7 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
               currentColor={gameState.currentColor}
               deckCount={gameState.deckCount}
               highlightedCardId={lastDrawnCardId}
+              animatingCardIds={animatingCardIds}
             />
           )}
         </section>
@@ -741,6 +1087,25 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
           </div>
         </div>
       )}
+
+      {/* 8. FLYING CARDS CONTAINER */}
+      {animatingCards.map(anim => (
+        <div
+          key={anim.id}
+          className="absolute pointer-events-none z-50"
+          style={{
+            left: 0,
+            top: 0,
+            width: anim.width,
+            height: anim.height,
+            transform: `translate3d(${anim.currentX}px, ${anim.currentY}px, 0) scale(${anim.scale}) rotate(${anim.rotation}deg)`,
+            transition: `transform ${anim.card.id ? 300 : 200}ms cubic-bezier(0.25, 0.8, 0.25, 1), opacity ${anim.card.id ? 300 : 200}ms ease`,
+            opacity: anim.opacity
+          }}
+        >
+          <Card card={anim.card} hidden={anim.hidden} size={anim.size || 'md'} />
+        </div>
+      ))}
     </div>
   );
 }

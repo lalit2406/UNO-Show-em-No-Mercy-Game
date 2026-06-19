@@ -579,4 +579,110 @@ export default function registerGameHandlers(io, socket) {
       socket.emit('error_message', 'Failed to restart the game.');
     }
   });
+
+  // 9. Remove Player (Host only)
+  socket.on('remove_player', async ({ userId }) => {
+    try {
+      const room = await Room.findOne({ host: socket.user.id, $or: [{ status: 'lobby' }, { status: 'active' }] });
+      if (!room) {
+        return socket.emit('error_message', 'Only the host can remove players.');
+      }
+
+      if (userId.toString() === socket.user.id.toString()) {
+        return socket.emit('error_message', 'Host cannot remove themselves.');
+      }
+
+      // Find the player in the room
+      const targetPlayer = room.players.find(p => p.userId.toString() === userId.toString());
+      if (!targetPlayer) {
+        return socket.emit('error_message', 'Player not found in this room.');
+      }
+
+      const targetUsername = targetPlayer.username;
+      const targetSocketId = targetPlayer.socketId;
+
+      // Remove player from room players list
+      room.players = room.players.filter(p => p.userId.toString() !== userId.toString());
+
+      let wasGameActive = room.status === 'active';
+      let gameState = null;
+
+      if (wasGameActive && room.gameState) {
+        gameState = await GameState.findById(room.gameState);
+        if (gameState && gameState.status !== 'finished') {
+          const gamePlayerIdx = gameState.players.findIndex(p => p.userId.toString() === userId.toString());
+          if (gamePlayerIdx !== -1) {
+            const isCurrentTurn = gameState.turnIndex === gamePlayerIdx;
+
+            // Remove player from game state players list (and their cards implicitly)
+            gameState.players.splice(gamePlayerIdx, 1);
+
+            // If the player was the current turn, shift turn
+            if (isCurrentTurn && gameState.players.length > 0) {
+              if (gameState.turnIndex >= gameState.players.length) {
+                gameState.turnIndex = 0;
+              }
+              // Advance to the next active player if needed
+              let attempts = 0;
+              while (
+                (gameState.players[gameState.turnIndex].isEliminated || gameState.players[gameState.turnIndex].finishedRank > 0) &&
+                attempts < gameState.players.length
+              ) {
+                gameState.turnIndex = (gameState.turnIndex + 1) % gameState.players.length;
+                attempts++;
+              }
+            } else if (gameState.turnIndex > gamePlayerIdx) {
+              // Adjust turnIndex because elements shifted left
+              gameState.turnIndex--;
+            }
+
+            // Check if game status waiting for roulette is affected
+            if (gameState.status === 'roulette_waiting' && gameState.actionData) {
+              const { rouletteTargetIndex } = gameState.actionData;
+              if (rouletteTargetIndex === gamePlayerIdx) {
+                // Kicked player was target of roulette. Reset roulette.
+                gameState.status = 'playing';
+                gameState.actionData = {};
+              } else if (rouletteTargetIndex > gamePlayerIdx) {
+                gameState.actionData.rouletteTargetIndex--;
+              }
+            }
+
+            // Check win/finished condition
+            checkMercyRule(gameState);
+
+            if (gameState.status === 'finished') {
+              room.status = 'finished';
+            }
+
+            await gameState.save();
+          }
+        }
+      }
+
+      await room.save();
+
+      // Notify the kicked player
+      const targetSocket = io.sockets.sockets.get(targetSocketId);
+      if (targetSocket) {
+        targetSocket.emit('kicked_from_room');
+        targetSocket.leave(room.roomCode);
+      }
+
+      // Broadcast event to remaining players
+      io.in(room.roomCode).emit('player_removed', { username: targetUsername });
+
+      if (wasGameActive) {
+        // Sync fresh game state to all remaining players
+        await syncGameState(io, room.roomCode, room._id);
+      } else {
+        // Sync room data for lobby
+        io.in(room.roomCode).emit('room_updated', room);
+      }
+
+    } catch (err) {
+      logger.error('Error removing player', err);
+      socket.emit('error_message', 'Failed to remove player.');
+    }
+  });
 }

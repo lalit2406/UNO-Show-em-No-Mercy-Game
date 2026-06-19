@@ -67,18 +67,31 @@ function MainApp() {
       alert(`Error: ${msg}`);
     };
 
+    const handleKickedFromRoom = () => {
+      disconnectSocket();
+      setCurrentRoom(null);
+      setCurrentGameState(null);
+      setCurrentPlayer(null);
+      setRoomCode('');
+      setCurrentView('home');
+      setLoadingState('');
+      alert('You were removed from the room by the host.');
+    };
+
     socket.on('room_updated', handleRoomUpdated);
     socket.on('game_started', handleGameStarted);
     socket.on('game_state_sync', handleGameStateSync);
     socket.on('error_message', handleErrorMessage);
+    socket.on('kicked_from_room', handleKickedFromRoom);
 
     return () => {
       socket.off('room_updated', handleRoomUpdated);
       socket.off('game_started', handleGameStarted);
       socket.off('game_state_sync', handleGameStateSync);
       socket.off('error_message', handleErrorMessage);
+      socket.off('kicked_from_room', handleKickedFromRoom);
     };
-  }, [socket, username]);
+  }, [socket, username, disconnectSocket]);
 
   const handleHost = async (name) => {
     setUsername(name);

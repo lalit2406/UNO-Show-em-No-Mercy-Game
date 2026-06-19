@@ -181,7 +181,7 @@ export default function JoinViaInvite({ roomCode, onJoin, onCancel }) {
   };
 
   return (
-    <div className="relative min-h-screen bg-slate-950 flex justify-center items-center p-6 text-white select-none overflow-hidden">
+    <div className="relative min-h-screen w-full max-w-full bg-slate-950 flex justify-center items-center p-6 text-white select-none overflow-hidden">
       <style dangerouslySetInnerHTML={{ __html: inlineStyles }} />
 
       {/* 1. Neon Glowing Streaks & Laser Lines */}

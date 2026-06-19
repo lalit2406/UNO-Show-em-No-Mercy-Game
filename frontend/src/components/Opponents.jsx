@@ -1,7 +1,7 @@
 import React from 'react';
 import Card from './Card';
 
-export default function Opponents({ players, currentTurnIndex, myUserId }) {
+export default function Opponents({ players, currentTurnIndex, myUserId, isHost, onRemovePlayer }) {
   // Filter out myself to list only opponents
   const opponents = players.filter(
     p => p.userId.toString() !== myUserId && (p.userId._id ? p.userId._id.toString() !== myUserId : true)
@@ -40,6 +40,7 @@ export default function Opponents({ players, currentTurnIndex, myUserId }) {
 
         return (
           <div
+            id={`opponent-avatar-${opponent.username}`}
             key={opponent.userId._id || opponent.userId}
             className={`relative flex flex-col items-center p-1.5 sm:p-3 rounded-xl sm:rounded-2xl transition-all duration-300 ${
               isCurrentTurn
@@ -49,6 +50,18 @@ export default function Opponents({ players, currentTurnIndex, myUserId }) {
                 : 'bg-slate-800/40 border-2 border-slate-700/40'
             } ${isEliminated ? 'opacity-40 grayscale' : ''} w-24 sm:w-40`}
           >
+            {isHost && !isFinished && onRemovePlayer && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemovePlayer(opponent);
+                }}
+                className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-red-600/80 hover:bg-red-600 text-white flex items-center justify-center text-[10px] font-black transition-all hover:scale-110 active:scale-90 z-20 shadow-md border border-white/10"
+                title={`Remove ${opponent.username}`}
+              >
+                ✕
+              </button>
+            )}
             {/* Turn Glow Overlay */}
             {isCurrentTurn && (
               <span className="absolute -top-2.5 px-2 py-0.5 rounded-full bg-red-600 text-[8px] sm:text-[10px] font-black text-white uppercase tracking-wider animate-pulse">
