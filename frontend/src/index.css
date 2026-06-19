@@ -89,4 +89,19 @@ body,
   }
 }
 
+@keyframes logo-float {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+    filter: drop-shadow(0 0 12px rgba(239, 68, 68, 0.45)) drop-shadow(0 0 24px rgba(249, 115, 22, 0.25));
+  }
+  50% {
+    transform: translateY(-12px) scale(1.04);
+    filter: drop-shadow(0 0 20px rgba(239, 68, 68, 0.75)) drop-shadow(0 0 40px rgba(249, 115, 22, 0.45));
+  }
+}
+
+.animate-logo-float {
+  animation: logo-float 3s ease-in-out infinite;
+}
+
 

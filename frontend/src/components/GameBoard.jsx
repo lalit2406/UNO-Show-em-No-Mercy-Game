@@ -431,8 +431,14 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
   if (!gameState) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center text-white select-none">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-500 mb-4"></div>
-        <p className="text-slate-400 font-semibold">Connecting to Game Session...</p>
+        <img
+          src="/favicon.png"
+          alt="UNO No Mercy Logo"
+          className="w-24 h-24 sm:w-32 sm:h-32 object-contain animate-logo-float mb-6"
+        />
+        <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px] sm:text-xs animate-pulse">
+          Connecting to Game Session...
+        </p>
       </div>
     );
   }
