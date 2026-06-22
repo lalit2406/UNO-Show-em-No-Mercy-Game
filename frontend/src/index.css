@@ -104,4 +104,70 @@ body,
   animation: logo-float 3s ease-in-out infinite;
 }
 
+@keyframes badge-pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.12);
+  }
+}
+
+.animate-badge-pulse {
+  animation: badge-pulse 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+@keyframes card-flight {
+  0% {
+    transform: translate3d(var(--start-x), var(--start-y), 0);
+    opacity: 0.5;
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(var(--end-x), var(--end-y), 0);
+    opacity: 1;
+  }
+}
+
+.animate-card-flight-outer {
+  animation-name: card-flight;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); /* custom easeOutExpo timing */
+  animation-fill-mode: forwards;
+  will-change: transform;
+}
+
+@keyframes card-flight-inner {
+  0% {
+    transform: scale(var(--flight-start-scale, 1)) rotate(var(--flight-start-rot, 0deg));
+  }
+  50% {
+    transform: scale(var(--flight-mid-scale, 1.15)) rotate(var(--flight-mid-rot, 4deg));
+  }
+  100% {
+    transform: scale(var(--flight-end-scale, 1)) rotate(var(--flight-end-rot, 0deg));
+  }
+}
+
+.animate-card-flight-inner {
+  animation-name: card-flight-inner;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-fill-mode: forwards;
+}
+
+@keyframes discard-card-fade-in {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.animate-discard-fade-in {
+  animation: discard-card-fade-in 0.12s ease-out forwards;
+}
+
+
 

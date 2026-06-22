@@ -11,6 +11,58 @@ const getGlowColor = (color) => {
   }
 };
 
+const COLOR_ORDER = {
+  Blue: 1,
+  Green: 2,
+  Red: 3,
+  Yellow: 4,
+  Wild: 5
+};
+
+const TYPE_ORDER = {
+  number: 1,
+  skip: 2,
+  reverse: 3,
+  draw2: 4,
+  skip_everyone: 5,
+  discard_all: 6,
+  wild: 7,
+  wild_draw6: 8,
+  wild_reverse_draw4: 9,
+  wild_draw10: 10,
+  wild_color_roulette: 11
+};
+
+const sortHand = (handList) => {
+  if (!handList) return [];
+  return [...handList]
+    .map((card, originalIndex) => ({ card, originalIndex }))
+    .sort((a, b) => {
+      const colorA = COLOR_ORDER[a.card.color] || 99;
+      const colorB = COLOR_ORDER[b.card.color] || 99;
+      if (colorA !== colorB) {
+        return colorA - colorB;
+      }
+
+      const typeA = TYPE_ORDER[a.card.type] || 99;
+      const typeB = TYPE_ORDER[b.card.type] || 99;
+      if (typeA !== typeB) {
+        return typeA - typeB;
+      }
+
+      if (a.card.type === 'number' && b.card.type === 'number') {
+        const valA = Number(a.card.value) || 0;
+        const valB = Number(b.card.value) || 0;
+        if (valA !== valB) {
+          return valA - valB;
+        }
+      }
+
+      return a.originalIndex - b.originalIndex;
+    })
+    .map(item => item.card);
+};
+
 export default function PlayerHand({
   hand,
   isMyTurn,
@@ -22,9 +74,41 @@ export default function PlayerHand({
   highlightedCardId,
   animatingCardIds = new Set()
 }) {
-  const [sortBy, setSortBy] = useState('color'); // 'color' | 'value'
   const [hoveredCardId, setHoveredCardId] = useState(null);
+  const [localPlayingCardId, setLocalPlayingCardId] = useState(null);
   const [screenWidth, setScreenWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1000);
+
+  // Synchronize and clear localPlayingCardId when parent prop catches up or safety timeout fires
+  useEffect(() => {
+    if (localPlayingCardId) {
+      if (animatingCardIds.has(localPlayingCardId) || !hand.some(c => c.id === localPlayingCardId)) {
+        setLocalPlayingCardId(null);
+      } else {
+        const timer = setTimeout(() => {
+          setLocalPlayingCardId(null);
+        }, 1200);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [animatingCardIds, hand, localPlayingCardId]);
+
+  const [visualHand, setVisualHand] = useState(() => hand || []);
+
+  useEffect(() => {
+    setVisualHand(prevVisual => {
+      const newHand = [...hand];
+      const incomingIds = new Set(hand.map(c => c.id));
+
+      prevVisual.forEach((prevCard, index) => {
+        const isAnimating = (animatingCardIds && animatingCardIds.has(prevCard.id)) || prevCard.id === localPlayingCardId;
+        if (isAnimating && !incomingIds.has(prevCard.id)) {
+          newHand.splice(index, 0, prevCard);
+          incomingIds.add(prevCard.id);
+        }
+      });
+      return newHand;
+    });
+  }, [hand, animatingCardIds, localPlayingCardId]);
 
   // Gesture State
   const [draggedCardId, setDraggedCardId] = useState(null);
@@ -148,6 +232,7 @@ export default function PlayerHand({
 
     const handleDragEnd = (e) => {
       setPendingDragCard(null);
+      setHoveredCardId(null); // Clear hover/touch states instantly on release
 
       if (!draggedCardId) {
         return;
@@ -199,6 +284,7 @@ export default function PlayerHand({
           const releaseX = draggedStartRect.left + dragOffset.x + window.scrollX;
           const releaseY = draggedStartRect.top + dragOffset.y + window.scrollY;
 
+          setLocalPlayingCardId(card.id);
           setDraggedCardId(null);
           setDraggedStartRect(null);
           setDragOffset({ x: 0, y: 0 });
@@ -234,18 +320,22 @@ export default function PlayerHand({
     window.addEventListener('touchmove', handleDragMove, { passive: false });
     window.addEventListener('mouseup', handleDragEnd);
     window.addEventListener('touchend', handleDragEnd);
+    window.addEventListener('touchcancel', handleDragEnd);
 
     return () => {
       window.removeEventListener('mousemove', handleDragMove);
       window.removeEventListener('touchmove', handleDragMove);
       window.removeEventListener('mouseup', handleDragEnd);
       window.removeEventListener('touchend', handleDragEnd);
+      window.removeEventListener('touchcancel', handleDragEnd);
     };
   }, [draggedCardId, pendingDragCard, draggedStartRect, hand, onPlayCard]);
 
   const handleDragStart = (e, card) => {
     const isPlayable = isMyTurn && playableCardIds.has(card.id);
     if (!isPlayable) return; // Non-playable cards are not draggable
+
+    setHoveredCardId(card.id); // Set hover/touch state immediately on touch/drag start
 
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
@@ -273,8 +363,6 @@ export default function PlayerHand({
   const handleCardClickOrTap = (card) => {
     const isPlayable = isMyTurn && playableCardIds.has(card.id);
     if (!isPlayable) {
-      // Non-playable cards ignore highlight/play
-      setHoveredCardId(card.id);
       return;
     }
 
@@ -284,36 +372,24 @@ export default function PlayerHand({
 
     if (isDouble) {
       // Double tap/click plays card instantly
+      setLocalPlayingCardId(card.id);
       onPlayCard(card);
       lastClickRef.current = { time: 0, cardId: null };
     } else {
       // Single click highlights
-      setHoveredCardId(card.id);
       lastClickRef.current = { time: now, cardId: card.id };
     }
   };
-
-  // Sort cards based on preference
-  const sortedHand = [...hand].sort((a, b) => {
-    if (sortBy === 'color') {
-      if (a.color !== b.color) {
-        return a.color.localeCompare(b.color);
-      }
-      return a.value.localeCompare(b.value);
-    } else {
-      if (a.value !== b.value) {
-        return a.value.localeCompare(b.value);
-      }
-      return a.color.localeCompare(b.color);
-    }
-  });
 
   const cardWidth = screenWidth < 640 ? 88 : screenWidth < 768 ? 112 : 128;
   const padding = screenWidth < 640 ? 24 : 48;
   const maxHandWidth = Math.min(screenWidth - padding, 1100);
 
-  // Filter fanned hand to omit any cards currently animating
-  const visibleHand = sortedHand.filter(card => !animatingCardIds.has(card.id));
+  // Sort the visualHand (which retains played/animating cards) by color and value
+  const sortedHand = sortHand(visualHand);
+
+  // Keep all visualHand cards in visibleHand (no filtering them out completely, so they occupy their spacing slots)
+  const visibleHand = sortedHand;
   const N = visibleHand.length;
 
   // Spacing algorithm (distance from card start to next card start)
@@ -332,35 +408,10 @@ export default function PlayerHand({
 
   return (
     <div className="w-full flex flex-col items-center bg-slate-900 border-t-2 border-slate-700/50 p-2 pb-4 sm:p-4 sm:pb-6 gap-2 sm:gap-3 select-none">
-      {/* Hand Controls */}
-      <div className="w-full max-w-6xl flex flex-wrap gap-3 sm:gap-4 justify-center sm:justify-between items-center px-4">
-        {/* Left: Sort Controls */}
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-slate-400">Sort cards:</span>
-          <button
-            onClick={() => setSortBy('color')}
-            className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${
-              sortBy === 'color'
-                ? 'bg-red-500 text-white shadow-lg shadow-red-500/30'
-                : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-            }`}
-          >
-            Color
-          </button>
-          <button
-            onClick={() => setSortBy('value')}
-            className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${
-              sortBy === 'value'
-                ? 'bg-red-500 text-white shadow-lg shadow-red-500/30'
-                : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-            }`}
-          >
-            Value
-          </button>
-        </div>
-
+      {/* Hand Info Bar Row */}
+      <div className="w-full max-w-6xl flex justify-center items-center px-4">
         {/* Center: Match Stats Info Bar */}
-        <div className="flex items-center gap-3 bg-slate-950/40 border border-slate-800/60 rounded-full py-1 px-4 shadow-inner shadow-black/20 text-xs font-bold text-slate-300">
+        <div className="flex items-center gap-3 bg-slate-950/40 border border-slate-800/60 rounded-full py-1.5 px-5 shadow-inner shadow-black/20 text-xs font-bold text-slate-300">
           <div className="flex items-center gap-1">
             <span className="text-slate-400 text-xs">↻</span>
             <span className="text-yellow-400 text-[10px] sm:text-xs">
@@ -370,35 +421,27 @@ export default function PlayerHand({
           
           <span className="text-slate-800 select-none">|</span>
 
-          <div className="flex items-center gap-1.5 text-[10px] sm:text-xs">
-            <span className="text-slate-400 sm:inline hidden">Color:</span>
-            <span className={`font-black uppercase px-2 py-0.5 rounded text-[10px] text-black ${
-              currentColor === 'Red' ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.3)]' :
-              currentColor === 'Yellow' ? 'bg-yellow-400 shadow-[0_0_6px_rgba(250,204,21,0.3)]' :
-              currentColor === 'Green' ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.3)]' : 'bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.3)]'
-            }`}>
-              {currentColor}
-            </span>
+          <div className="flex items-center gap-1 text-[10px] sm:text-xs">
+            <span className="text-slate-400">🎴</span>
+            <span className="text-slate-200">{deckCount}<span className="hidden sm:inline"> Cards Left</span></span>
           </div>
 
           <span className="text-slate-800 select-none">|</span>
 
           <div className="flex items-center gap-1 text-[10px] sm:text-xs">
-            <span className="text-slate-400">🎴</span>
-            <span className="text-slate-200">{deckCount}<span className="hidden sm:inline"> Cards Left</span></span>
-          </div>
-        </div>
-
-        {/* Right: Hand Size Info */}
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-black text-slate-300">YOUR HAND</span>
-          <span className="px-2 py-0.5 rounded-full bg-red-600 text-white font-extrabold text-xs">
-            {hand.length} {hand.length === 1 ? 'card' : 'cards'}
-          </span>
-          {hand.length >= 20 && (
-            <span className="animate-pulse px-2.5 py-0.5 rounded-full bg-amber-500 text-black font-black text-xs">
-              ⚠️ MERCY RISK ({hand.length}/25)
+            <span className="text-slate-400">✋</span>
+            <span className="text-slate-200">
+              {hand.length} <span className="text-slate-400 font-medium">{hand.length === 1 ? 'Card' : 'Cards'} in Hand</span>
             </span>
+          </div>
+
+          {hand.length >= 20 && (
+            <>
+              <span className="text-slate-800 select-none">|</span>
+              <span className="animate-pulse bg-amber-500 text-black font-black text-[10px] px-2.5 py-0.5 rounded-full">
+                ⚠️ MERCY RISK ({hand.length}/25)
+              </span>
+            </>
           )}
         </div>
       </div>
@@ -417,45 +460,29 @@ export default function PlayerHand({
             const isSnapping = snappingCardId === card.id;
             const isDraggedOrSnapping = (isBeingDragged || isSnapping) && draggedStartRect !== null;
 
-            // Base scale & transform calculations based on playable and turn active status
-            let baseScale = 1.0;
-            if (isMyTurn) {
-              if (isPlayable) {
-                baseScale = 1.03; // Slight base scale boost for playable cards
-              } else {
-                baseScale = 0.97; // Slightly smaller base scale for non-playable cards
-              }
-            } else {
-              baseScale = 1.0;
-            }
+            const isAnimating = (animatingCardIds && animatingCardIds.has(card.id)) || card.id === localPlayingCardId;
 
-            const isPulse = pulsePlayable && isPlayable;
+            // All cards stay on the same baseline and translate horizontally to their sorted slot. Hover/touch scales playable cards to 1.03.
             let transformStr = '';
             if (isDraggedOrSnapping) {
               transformStr = `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0) scale(${isBeingDragged ? 1.04 : 1.0}) rotate(${isBeingDragged ? dragOffset.x * 0.08 : 0}deg)`;
             } else {
-              // Hover lift and scale is ONLY active for playable cards on my turn
-              const hoverLift = (isPlayable && isHovered) ? -16 : 0;
-              const hoverScale = (isPlayable && isHovered)
-                ? 1.07
-                : isPulse
-                ? baseScale * 1.05 // Brief pulse up
-                : baseScale;
-              transformStr = `translate3d(0px, ${hoverLift}px, 0) scale(${hoverScale})`;
+              const hoverScale = (isPlayable && isHovered) ? 1.03 : 1.0;
+              transformStr = `translate3d(${index * spacing}px, 0px, 0) scale(${hoverScale})`;
             }
 
             const glowColor = getGlowColor(card.color);
             const cardStyle = {
               position: isDraggedOrSnapping ? 'fixed' : 'absolute',
-              left: isDraggedOrSnapping ? `${draggedStartRect.left}px` : `${index * spacing}px`,
-              top: isDraggedOrSnapping ? `${draggedStartRect.top}px` : 'auto',
+              left: isDraggedOrSnapping ? `${draggedStartRect.left}px` : '0px',
+              top: isDraggedOrSnapping ? `${draggedStartRect.top}px` : '0px',
               width: isDraggedOrSnapping ? `${draggedStartRect.width}px` : 'auto',
               height: isDraggedOrSnapping ? `${draggedStartRect.height}px` : 'auto',
               zIndex: isBeingDragged ? 99999 : isSnapping ? 99998 : (isHovered && isPlayable ? 100 : index + 1),
               transform: transformStr,
               transition: isBeingDragged
                 ? 'none'
-                : 'transform 0.25s cubic-bezier(0.25, 0.8, 0.25, 1), z-index 0s 0.25s',
+                : 'transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1), z-index 0s 0.18s',
               cursor: isPlayable ? (isBeingDragged ? 'grabbing' : 'pointer') : 'default',
               touchAction: isPlayable ? 'none' : 'auto',
               boxShadow: isBeingDragged
@@ -463,7 +490,9 @@ export default function PlayerHand({
                 : isSnapping
                 ? `0 15px 20px -10px rgba(0, 0, 0, 0.4), 0 0 15px 2px ${glowColor}`
                 : 'none',
-              pointerEvents: isBeingDragged ? 'none' : 'auto'
+              pointerEvents: isAnimating ? 'none' : (isBeingDragged ? 'none' : 'auto'),
+              opacity: isAnimating ? 0 : 1,
+              visibility: isAnimating ? 'hidden' : 'visible'
             };
 
             return (
@@ -483,6 +512,7 @@ export default function PlayerHand({
                   isHighlighted={highlightedCardId === card.id}
                   isMyTurn={isMyTurn}
                   isHandCard={true}
+                  isHovered={isHovered}
                   size="md"
                 />
               </div>

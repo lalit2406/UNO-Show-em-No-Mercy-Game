@@ -13,6 +13,12 @@ const COLOR_CODES = {
   Blue: 'bg-blue-500 hover:bg-blue-600 shadow-blue-500/20'
 };
 
+const CARD_SIZE_CLASSES = {
+  sm: 'w-[48px] h-[72px] sm:w-[56px] sm:h-[84px] md:w-[64px] md:h-[96px]',
+  md: 'w-[88px] h-[128px] sm:w-[112px] sm:h-[168px] md:w-[128px] md:h-[192px]',
+  lg: 'w-[128px] h-[192px] sm:w-[160px] sm:h-[224px] md:w-[176px] md:h-[256px]'
+};
+
 function getDrawRank(cardType) {
   switch (cardType) {
     case 'draw2':
@@ -53,8 +59,31 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
   // Animations State
   const [animatingCards, setAnimatingCards] = useState([]);
   const [animatingCardIds, setAnimatingCardIds] = useState(new Set());
+  const [animatingPlayCardId, setAnimatingPlayCardId] = useState(null);
+  const [optimisticDiscardCard, setOptimisticDiscardCard] = useState(null);
+
+  const animatingPlayCardIdRef = useRef(null);
+  useEffect(() => {
+    animatingPlayCardIdRef.current = animatingPlayCardId;
+  }, [animatingPlayCardId]);
+
   const privateDrawnTimerRef = useRef(null);
   const [screenWidth, setScreenWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1000);
+
+  // Active Color Badge Pulse State
+  const [pulseColorBadge, setPulseColorBadge] = useState(false);
+  const prevColorRef = useRef(gameState?.currentColor);
+
+  useEffect(() => {
+    if (gameState?.currentColor && gameState.currentColor !== prevColorRef.current) {
+      setPulseColorBadge(true);
+      const timer = setTimeout(() => {
+        setPulseColorBadge(false);
+      }, 400); // 400ms pulse
+      prevColorRef.current = gameState.currentColor;
+      return () => clearTimeout(timer);
+    }
+  }, [gameState?.currentColor]);
 
   useEffect(() => {
     const handleResize = () => setScreenWidth(window.innerWidth);
@@ -74,38 +103,56 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
     };
   };
 
-  const addCardAnimation = ({ card, startX, startY, endX, endY, duration, rotation, scale, hidden, size }) => {
+  const addCardAnimation = ({ card, startX, startY, endX, endY, duration, rotation, scale, hidden, size, isPlay = false }) => {
     const animId = Math.random().toString(36).substring(2, 9);
+    
+    // Configure scale dynamics
+    const isOpponentDraw = hidden;
+    const isOpponentPlay = !hidden && size === 'sm';
+    
+    let startScale = 1.0;
+    let midScale = 1.15;
+    let endScale = scale || 1.0;
+    
+    if (isOpponentDraw) {
+      startScale = 0.8;
+      midScale = 0.7;
+      endScale = scale || 0.5;
+    } else if (isOpponentPlay) {
+      startScale = 0.6;
+      midScale = 0.9;
+      endScale = scale || 0.85;
+    }
+
     const newAnim = {
       id: animId,
       card,
-      currentX: startX,
-      currentY: startY,
-      scale: 1,
-      rotation: 0,
-      opacity: 1,
+      startX,
+      startY,
+      endX,
+      endY,
+      duration,
+      startScale,
+      midScale,
+      endScale,
+      startRot: 0,
+      midRot: rotation ? rotation * 0.6 : (Math.random() * 8 - 4),
+      endRot: rotation || 0,
       hidden,
-      size,
-      width: size === 'sm' ? '56px' : '88px',
-      height: size === 'sm' ? '84px' : '128px'
+      size
     };
+
+    if (isPlay && card && card.id) {
+      setAnimatingPlayCardId(card.id);
+    }
 
     setAnimatingCards(prev => [...prev, newAnim]);
 
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        setAnimatingCards(prev =>
-          prev.map(anim =>
-            anim.id === animId
-              ? { ...anim, currentX: endX, currentY: endY, scale, rotation, opacity: 0.9 }
-              : anim
-          )
-        );
-      });
-    });
-
     setTimeout(() => {
       setAnimatingCards(prev => prev.filter(anim => anim.id !== animId));
+      if (isPlay && card && card.id) {
+        setAnimatingPlayCardId(prev => prev === card.id ? null : prev);
+      }
     }, duration);
   };
 
@@ -117,6 +164,18 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
     socket.emit('sync_game');
 
     const handleSync = (state) => {
+      setOptimisticDiscardCard(prev => {
+        if (!prev) return null;
+        const newTopCard = state.discardPile[state.discardPile.length - 1];
+        if (newTopCard && newTopCard.id === prev.id) {
+          return null;
+        }
+        if (state.status === 'finished' || state.status === 'lobby') {
+          return null;
+        }
+        return prev;
+      });
+
       setGameState(prev => {
         if (prev) {
           const wasMyTurn = prev.players[prev.turnIndex]?.userId.toString() === myUserId ||
@@ -240,11 +299,12 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
           startY,
           endX,
           endY,
-          duration: 300,
+          duration: 250,
           rotation: Math.random() * 30 - 15,
           scale: 0.85,
           hidden: false,
-          size: 'sm'
+          size: 'sm',
+          isPlay: true
         });
       }
 
@@ -416,6 +476,7 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
 
   const handleRestartMatch = () => {
     setShowRestartConfirm(false);
+    setOptimisticDiscardCard(null);
     if (socket) {
       socket.emit('restart_game');
     }
@@ -458,6 +519,28 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
 
   const topCard = gameState.discardPile[gameState.discardPile.length - 1];
 
+  const serverTopCard = gameState.discardPile[gameState.discardPile.length - 1];
+  const serverPrevCard = gameState.discardPile.length > 1 ? gameState.discardPile[gameState.discardPile.length - 2] : null;
+
+  let visualTopCard = null;
+  let prevCard = null;
+
+  if (animatingPlayCardId) {
+    if (serverTopCard && serverTopCard.id === animatingPlayCardId) {
+      visualTopCard = serverPrevCard;
+      prevCard = gameState.discardPile.length > 2 ? gameState.discardPile[gameState.discardPile.length - 3] : null;
+    } else {
+      visualTopCard = serverTopCard;
+      prevCard = serverPrevCard;
+    }
+  } else if (optimisticDiscardCard) {
+    visualTopCard = optimisticDiscardCard;
+    prevCard = serverTopCard;
+  } else {
+    visualTopCard = serverTopCard;
+    prevCard = serverPrevCard;
+  }
+
   // Helper to pre-calculate playable cards in player hand
   const playableCardIds = new Set();
   if (myPlayerState && !myPlayerState.isEliminated) {
@@ -492,6 +575,8 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
       const endX = discardPos ? discardPos.x - discardPos.width / 2 : window.innerWidth / 2 + 50;
       const endY = discardPos ? discardPos.y - discardPos.height / 2 : window.innerHeight / 2 - 80;
 
+      setOptimisticDiscardCard(card); // Set optimistic top card state
+
       setAnimatingCardIds(prev => {
         const next = new Set(prev);
         next.add(card.id);
@@ -504,11 +589,12 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
         startY,
         endX,
         endY,
-        duration: 300,
+        duration: 250,
         rotation: Math.random() * 30 - 15,
-        scale: 0.9,
+        scale: 0.95,
         hidden: false,
-        size: screenWidth < 640 ? 'sm' : 'md'
+        size: screenWidth < 640 ? 'sm' : 'md',
+        isPlay: true
       });
 
       setTimeout(() => {
@@ -517,7 +603,17 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
           next.delete(card.id);
           return next;
         });
-      }, 300);
+      }, 250);
+
+      // Safety fallback: clear optimistic card after 1.5s in case sync is lost
+      setTimeout(() => {
+        setOptimisticDiscardCard(prev => {
+          if (prev && prev.id === card.id) {
+            return null;
+          }
+          return prev;
+        });
+      }, 1500);
 
       socket.emit('play_card', { cardId: card.id });
     }
@@ -535,6 +631,8 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
       const endX = discardPos ? discardPos.x - discardPos.width / 2 : window.innerWidth / 2 + 50;
       const endY = discardPos ? discardPos.y - discardPos.height / 2 : window.innerHeight / 2 - 80;
 
+      setOptimisticDiscardCard(card); // Set optimistic top card state
+
       setAnimatingCardIds(prev => {
         const next = new Set(prev);
         next.add(card.id);
@@ -547,11 +645,12 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
         startY,
         endX,
         endY,
-        duration: 300,
+        duration: 250,
         rotation: Math.random() * 30 - 15,
-        scale: 0.9,
+        scale: 0.95,
         hidden: false,
-        size: screenWidth < 640 ? 'sm' : 'md'
+        size: screenWidth < 640 ? 'sm' : 'md',
+        isPlay: true
       });
 
       setTimeout(() => {
@@ -560,7 +659,17 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
           next.delete(card.id);
           return next;
         });
-      }, 300);
+      }, 250);
+
+      // Safety fallback: clear optimistic card after 1.5s in case sync is lost
+      setTimeout(() => {
+        setOptimisticDiscardCard(prev => {
+          if (prev && prev.id === card.id) {
+            return null;
+          }
+          return prev;
+        });
+      }, 1500);
 
       socket.emit('play_card', { cardId: pendingWildCard.id, chosenColor: color });
       setPendingWildCard(null);
@@ -757,7 +866,7 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
         </div>
 
         {/* Center: Table & Play Piles */}
-        <div className="md:col-span-2 flex flex-col items-center justify-center gap-6 py-6 relative">
+        <div className="md:col-span-2 flex flex-col items-center justify-center gap-8  relative">
           {/* Rotating play-direction glowing ring */}
           <div className={`absolute w-64 h-64 sm:w-80 sm:h-80 rounded-full border-4 border-dashed border-slate-800 opacity-20 pointer-events-none ${
             gameState.direction === 1 ? 'animate-[spin_40s_linear_infinite]' : 'animate-[spin_40s_linear_infinite_reverse]'
@@ -796,13 +905,48 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
             {/* Discard Pile Stack */}
             <div className="flex flex-col items-center gap-1.5">
               <span className="text-xs font-bold text-slate-500">Discard Pile</span>
-              <div id="discard-pile" className="relative">
+              <div id="discard-pile" className="relative w-[88px] h-[128px] sm:w-[112px] sm:h-[168px] md:w-[128px] md:h-[192px]">
                 {/* Pre-drawn under-stacking shadow cards */}
-                <div className="absolute top-1 left-1 w-[88px] h-[128px] sm:w-[112px] sm:h-[168px] md:w-[128px] md:h-[192px] bg-slate-900 border border-slate-800 rounded-xl -z-10 rotate-3"></div>
-                <Card card={topCard} size="md" />
+                <div className="absolute top-1 left-1 w-full h-full bg-slate-900 border border-slate-800 rounded-xl -z-10 rotate-3"></div>
+                
+                {/* Underneath card (previous top card) */}
+                {prevCard && (
+                  <div className="absolute inset-0">
+                    <Card card={prevCard} size="md" />
+                  </div>
+                )}
+
+                {/* Top card (new top card) */}
+                {visualTopCard && (
+                  <div key={visualTopCard.id} className="absolute inset-0 animate-discard-fade-in">
+                    <Card card={visualTopCard} size="md" />
+                  </div>
+                )}
               </div>
             </div>
           </div>
+
+          {/* Active Color Badge */}
+          {(() => {
+            const activeColor = gameState.currentColor;
+            const badgeColorConfig = {
+              Red: { glow: ' border-red-500/30', emoji: '🟥', label: 'RED' },
+              Green: {  glow: ' border-emerald-500/30', emoji: '🟩', label: 'GREEN' },
+              Blue: {  glow: ' border-blue-500/30', emoji: '🟦', label: 'BLUE' },
+              Yellow: { glow: ' border-amber-400/30', emoji: '🟨', label: 'YELLOW' }
+            }[activeColor] || { bg: 'bg-slate-700', glow: 'shadow-none border-slate-600/30', emoji: '⚪', label: 'UNKNOWN' };
+
+            return (
+              <div
+                className={`relative z-20 flex items-center justify-center gap-2 px-6 sm:px-8 h-11 sm:h-12 rounded-full border text-white font-black tracking-widest text-sm sm:text-base uppercase drop-shadow-[0_1.5px_2px_rgba(0,0,0,0.65)] transition-all duration-300 ease-in-out ${
+                  pulseColorBadge ? 'animate-badge-pulse' : ''
+                } ${badgeColorConfig.bg} ${badgeColorConfig.glow}`}
+              >
+                <span className="text-2xl">{badgeColorConfig.emoji}</span>
+                <span>{badgeColorConfig.label}</span>
+              </div>
+            );
+          })()}
 
           {/* Animated UNO Button Indicator */}
           {myPlayerState && myPlayerState.hand.length === 1 && (myPlayerState.needsUnoCall || myPlayerState.hasCalledUno) && (
@@ -1056,7 +1200,13 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
               currentColor={gameState.currentColor}
               deckCount={gameState.deckCount}
               highlightedCardId={lastDrawnCardId}
-              animatingCardIds={animatingCardIds}
+              animatingCardIds={(() => {
+                const ids = new Set(animatingCardIds);
+                if (pendingWildCard) {
+                  ids.add(pendingWildCard.id);
+                }
+                return ids;
+              })()}
             />
           )}
         </section>
@@ -1095,23 +1245,44 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
       )}
 
       {/* 8. FLYING CARDS CONTAINER */}
-      {animatingCards.map(anim => (
-        <div
-          key={anim.id}
-          className="absolute pointer-events-none z-50"
-          style={{
-            left: 0,
-            top: 0,
-            width: anim.width,
-            height: anim.height,
-            transform: `translate3d(${anim.currentX}px, ${anim.currentY}px, 0) scale(${anim.scale}) rotate(${anim.rotation}deg)`,
-            transition: `transform ${anim.card.id ? 300 : 200}ms cubic-bezier(0.25, 0.8, 0.25, 1), opacity ${anim.card.id ? 300 : 200}ms ease`,
-            opacity: anim.opacity
-          }}
-        >
-          <Card card={anim.card} hidden={anim.hidden} size={anim.size || 'md'} />
-        </div>
-      ))}
+      {animatingCards.map(anim => {
+        const styleOuter = {
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          '--start-x': `${anim.startX}px`,
+          '--start-y': `${anim.startY}px`,
+          '--end-x': `${anim.endX}px`,
+          '--end-y': `${anim.endY}px`,
+          animationDuration: `${anim.duration}ms`,
+          zIndex: 99999,
+          pointerEvents: 'none'
+        };
+
+        const styleInner = {
+          width: '100%',
+          height: '100%',
+          '--flight-start-scale': anim.startScale,
+          '--flight-mid-scale': anim.midScale,
+          '--flight-end-scale': anim.endScale,
+          '--flight-start-rot': `${anim.startRot}deg`,
+          '--flight-mid-rot': `${anim.midRot}deg`,
+          '--flight-end-rot': `${anim.endRot}deg`,
+          animationDuration: `${anim.duration}ms`
+        };
+
+        return (
+          <div
+            key={anim.id}
+            className={`animate-card-flight-outer ${CARD_SIZE_CLASSES[anim.size || 'md']}`}
+            style={styleOuter}
+          >
+            <div className="animate-card-flight-inner" style={styleInner}>
+              <Card card={anim.card} hidden={anim.hidden} size={anim.size || 'md'} />
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

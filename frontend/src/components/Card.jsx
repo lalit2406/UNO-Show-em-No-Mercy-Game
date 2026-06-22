@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 const COLOR_MAP = {
   Red: {
@@ -52,6 +52,34 @@ const getCornerLabel = (type, value) => {
   return '';
 };
 
+const GLOW_STYLES = {
+  Red: {
+    border: '#EF4444',
+    glow: '0 0 10px rgba(239, 68, 68, 0.45), 0 0 20px rgba(239, 68, 68, 0.25)',
+    hoverGlow: '0 0 15px rgba(239, 68, 68, 0.75), 0 0 30px rgba(239, 68, 68, 0.45)'
+  },
+  Yellow: {
+    border: '#FBBF24',
+    glow: '0 0 10px rgba(251, 191, 36, 0.45), 0 0 20px rgba(251, 191, 36, 0.25)',
+    hoverGlow: '0 0 15px rgba(251, 191, 36, 0.75), 0 0 30px rgba(251, 191, 36, 0.45)'
+  },
+  Green: {
+    border: '#10B981',
+    glow: '0 0 10px rgba(16, 185, 129, 0.45), 0 0 20px rgba(16, 185, 129, 0.25)',
+    hoverGlow: '0 0 15px rgba(16, 185, 129, 0.75), 0 0 30px rgba(16, 185, 129, 0.45)'
+  },
+  Blue: {
+    border: '#3B82F6',
+    glow: '0 0 10px rgba(59, 130, 246, 0.45), 0 0 20px rgba(59, 130, 246, 0.25)',
+    hoverGlow: '0 0 15px rgba(59, 130, 246, 0.75), 0 0 30px rgba(59, 130, 246, 0.45)'
+  },
+  Wild: {
+    border: '#A855F7',
+    glow: '0 0 10px rgba(168, 85, 247, 0.55), 0 0 20px rgba(236, 72, 153, 0.3), 0 0 30px rgba(59, 130, 246, 0.2)',
+    hoverGlow: '0 0 15px rgba(168, 85, 247, 0.8), 0 0 30px rgba(236, 72, 153, 0.5), 0 0 40px rgba(59, 130, 246, 0.35)'
+  }
+};
+
 export default function Card({ 
   card, 
   onClick, 
@@ -59,9 +87,21 @@ export default function Card({
   isHighlighted = false, 
   isMyTurn = false, 
   isHandCard = false, 
+  isHovered = false,
   hidden = false, 
   size = 'md' 
 }) {
+  const [isHoveredLocal, setIsHoveredLocal] = useState(false);
+
+  const handleMouseEnter = () => {
+    if (isPlayable && isMyTurn) {
+      setIsHoveredLocal(true);
+    }
+  };
+  const handleMouseLeave = () => {
+    setIsHoveredLocal(false);
+  };
+
   if (hidden) {
     return <CardBack onClick={onClick} size={size} />;
   }
@@ -76,7 +116,7 @@ export default function Card({
   };
 
   const interactiveClasses = (isPlayable || isHighlighted)
-    ? 'cursor-pointer transition-all duration-300 active:scale-95 touch-manipulation'
+    ? 'cursor-pointer transition-all duration-200 active:scale-95 touch-manipulation'
     : 'cursor-not-allowed opacity-100';
 
   const cornerLabel = getCornerLabel(type, value);
@@ -203,6 +243,8 @@ export default function Card({
     }
   };
 
+  const activeHover = isHovered || isHoveredLocal;
+
   // Base visual filters and opacity based on playability and turn active state
   let opacityVal = 1.0;
   let filterVal = 'none';
@@ -211,35 +253,47 @@ export default function Card({
     if (isMyTurn) {
       if (isPlayable) {
         opacityVal = 1.0;
-        filterVal = 'none';
+        filterVal = activeHover ? 'contrast(1.05) brightness(1.08)' : 'contrast(1.02) brightness(1.03)';
       } else {
-        opacityVal = 0.75; // Moderate dimming (instead of 0.5)
-        filterVal = 'brightness(0.8) saturate(0.8)'; // Moderate brightness/saturation reduction
+        opacityVal = 1.0; // Keep normal opacity for non-playable cards (slightly lower visual priority naturally)
+        filterVal = 'brightness(0.85) saturate(0.9)'; // Slightly lower visual priority
       }
     } else {
-      opacityVal = 0.8; // Clearer visibility when not turn (instead of 0.6)
-      filterVal = 'brightness(0.8) saturate(0.85)'; // Moderate reduction
+      opacityVal = 1.0; // Keep normal appearance regardless of whose turn it is
+      filterVal = 'none';
     }
   } else {
     // For cards on the table, keep standard look
     filterVal = (isPlayable || isHighlighted) ? 'none' : 'brightness(1.0)';
   }
 
+  const showHighlight = isPlayable && isMyTurn;
+  const glowConfig = GLOW_STYLES[color] || GLOW_STYLES.Wild;
+
   const cardStyle = {
-    borderColor: isHighlighted ? '#FBBF24' : isPlayable ? '#39FF88' : '#000000',
+    borderColor: isHighlighted 
+      ? '#FBBF24' 
+      : showHighlight 
+      ? glowConfig.border 
+      : '#000000',
     boxShadow: isHighlighted
       ? '0 0 14px rgba(251,191,36,0.85), 0 0 26px rgba(251,191,36,0.65)'
-      : isPlayable 
-      ? '0 0 10px rgba(57,255,136,0.65), 0 0 22px rgba(57,255,136,0.45)' 
+      : showHighlight 
+      ? (activeHover ? glowConfig.hoverGlow : glowConfig.glow)
       : '0 2px 4px rgba(0,0,0,0.3)',
     filter: isHighlighted ? 'none' : filterVal,
     opacity: opacityVal,
-    transition: 'border-color 0.25s ease, box-shadow 0.25s ease, filter 0.25s ease, opacity 0.25s ease'
+    transform: 'none',
+    transition: 'border-color 0.18s cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 0.18s cubic-bezier(0.25, 0.8, 0.25, 1), filter 0.18s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.18s cubic-bezier(0.25, 0.8, 0.25, 1)'
   };
 
   return (
     <div
       onClick={isPlayable ? onClick : undefined}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+      onTouchStart={handleMouseEnter}
+      onTouchEnd={handleMouseLeave}
       className={`relative bg-gradient-to-br ${design.bg} ${(isPlayable || isHighlighted) ? 'border-4' : 'border-2'} select-none ${sizeClasses[size]} ${interactiveClasses}`}
       style={cardStyle}
     >
@@ -291,7 +345,7 @@ function CardBack({ onClick, size = 'md' }) {
   return (
     <div
       onClick={onClick}
-      className={`relative bg-black border-2 border-black bg-gradient-to-br from-black via-slate-900 to-red-950 flex flex-col justify-between items-center p-3 select-none overflow-hidden hover:scale-105 hover:shadow-2xl transition-all duration-300 ${sizeClasses[size]}`}
+      className={`relative bg-black border-2 border-black bg-gradient-to-br from-black via-slate-900 to-red-950 flex flex-col justify-between items-center p-3 select-none overflow-hidden hover:scale-105 hover:shadow-2xl transition-all duration-200 ease-out ${sizeClasses[size]}`}
     >
       <div className="w-full text-left font-black text-xs text-red-600 tracking-wider">NO MERCY</div>
       

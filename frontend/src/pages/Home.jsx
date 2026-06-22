@@ -297,7 +297,7 @@ export default function Home({ onHost, onJoin }) {
                 onClick={handleHostClick}
                 className="w-full py-4 rounded-2xl bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 font-black text-white hover:scale-[1.02] hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-300 shadow-xl shadow-red-600/20 hover:shadow-red-500/40 uppercase italic tracking-wider flex items-center justify-center gap-2 text-base"
               >
-                Host Game Lobby 🚀
+                Create Game Lobby 🚀
               </button>
               <button
                 onClick={handleJoinClick}
