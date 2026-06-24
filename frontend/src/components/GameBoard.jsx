@@ -280,8 +280,25 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
       }
     };
 
-    const handleCardPlayed = ({ username, card, currentColor }) => {
-      addLog(`${username} played ${card.color === 'Wild' ? 'Wild' : card.color} ${card.type === 'number' ? card.value : card.type.replace('_', ' ')} (Color is now ${currentColor})`);
+    const handleCardPlayed = ({ username, card, currentColor, reverseAsSkip }) => {
+      if (reverseAsSkip) {
+        addLog(`${username} played Reverse. With 2 players remaining, Reverse acted as Skip.`);
+      } else {
+        addLog(`${username} played ${card.color === 'Wild' ? 'Wild' : card.color} ${card.type === 'number' ? card.value : card.type.replace('_', ' ')} (Color is now ${currentColor})`);
+      }
+
+      // Add penalty stack log
+      if (card.drawValue > 0) {
+        if (card.type === 'draw2') {
+          addLog('Penalty Stack Active: Only Draw 2 or Draw 4 may be played.');
+        } else if (card.type === 'draw4' || card.type === 'wild_reverse_draw4') {
+          addLog('Penalty Stack Active: Only Draw 4 may be played.');
+        } else if (card.type === 'wild_draw6') {
+          addLog('Penalty Stack Active: Only Wild Draw 6 or Wild Draw 10 may be played.');
+        } else if (card.type === 'wild_draw10') {
+          addLog('Penalty Stack Active: Only Wild Draw 10 may be played.');
+        }
+      }
       
       // Animate flight path for opponent plays
       if (username !== usernameRef.current) {
@@ -544,21 +561,51 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
   // Helper to pre-calculate playable cards in player hand
   const playableCardIds = new Set();
   if (myPlayerState && !myPlayerState.isEliminated) {
-    myPlayerState.hand.forEach(card => {
-      // Check stacking requirements
-      if (gameState.penaltyStack > 0) {
-        const cardRank = getDrawRank(card.type);
-        const topRank = getDrawRank(topCard.type);
-        if (cardRank > 0 && cardRank >= topRank) {
+    if (gameState.penaltyStack > 0) {
+      myPlayerState.hand.forEach(card => {
+        const topType = topCard.type;
+        let isPlayable = false;
+        if (topType === 'draw2') {
+          isPlayable = card.type === 'draw2' || card.type === 'draw4';
+        } else if (topType === 'draw4' || topType === 'wild_reverse_draw4') {
+          isPlayable = card.type === 'draw4';
+        } else if (topType === 'wild_draw6') {
+          isPlayable = card.type === 'wild_draw6' || card.type === 'wild_draw10';
+        } else if (topType === 'wild_draw10') {
+          isPlayable = card.type === 'wild_draw10';
+        }
+        if (isPlayable) {
           playableCardIds.add(card.id);
         }
-      } else {
-        if (card.color === 'Wild' || card.color === gameState.currentColor || card.value === topCard.value) {
-          playableCardIds.add(card.id);
+      });
+    } else {
+      // Wild cards should only be playable when the player has NO OTHER VALID PLAY available.
+      const isNormalCardPlayable = (c) => {
+        if (c.color === 'Wild') return false;
+        return c.color === gameState.currentColor || c.value === topCard.value;
+      };
+      const hasNormalPlay = myPlayerState.hand.some(c => isNormalCardPlayable(c));
+
+      myPlayerState.hand.forEach(card => {
+        if (card.color === 'Wild') {
+          if (!hasNormalPlay) {
+            playableCardIds.add(card.id);
+          }
+        } else {
+          if (card.color === gameState.currentColor || card.value === topCard.value) {
+            playableCardIds.add(card.id);
+          }
         }
-      }
-    });
+      });
+    }
   }
+
+  const handlePlayAttemptFailed = (card) => {
+    if (card.color === 'Wild') {
+      setErrorMessage("Wild cards can only be played when no other valid card is available.");
+      setTimeout(() => setErrorMessage(null), 4000);
+    }
+  };
 
   const handleCardClick = (card, dragStartPos = null) => {
     if (card.color === 'Wild') {
@@ -860,7 +907,16 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
             <div className="p-3 bg-red-950/80 border border-red-800/60 rounded-xl flex flex-col items-center justify-center text-center animate-pulse">
               <span className="text-[10px] font-black tracking-widest text-red-500 uppercase">Penalty Stack</span>
               <span className="text-2xl font-black text-red-400">+{gameState.penaltyStack} Cards</span>
-              <span className="text-[9px] text-slate-400 mt-1">Stack equal or higher DRAW card!</span>
+              <span className="text-[9px] text-slate-400 mt-1">
+                {(() => {
+                  const topType = topCard?.type;
+                  if (topType === 'draw2') return 'Stack Draw 2 or Draw 4!';
+                  if (topType === 'draw4' || topType === 'wild_reverse_draw4') return 'Stack Draw 4!';
+                  if (topType === 'wild_draw6') return 'Stack Wild Draw 6 or Draw 10!';
+                  if (topType === 'wild_draw10') return 'Stack Wild Draw 10!';
+                  return 'Stack allowed DRAW card!';
+                })()}
+              </span>
             </div>
           )}
         </div>
@@ -1196,6 +1252,7 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
               isMyTurn={isMyTurn}
               playableCardIds={playableCardIds}
               onPlayCard={handleCardClick}
+              onPlayAttemptFailed={handlePlayAttemptFailed}
               direction={gameState.direction}
               currentColor={gameState.currentColor}
               deckCount={gameState.deckCount}

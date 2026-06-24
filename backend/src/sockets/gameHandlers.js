@@ -243,8 +243,14 @@ export default function registerGameHandlers(io, socket) {
       const previousRanks = new Map(gameState.players.map(p => [p.userId.toString(), p.finishedRank || 0]));
       const eliminatedBefore = new Set(gameState.players.filter(p => p.isEliminated).map(p => p.userId.toString()));
 
+      // Count active players BEFORE playing the card
+      const activePlayersBefore = gameState.players.filter(p => !p.isEliminated && (!p.finishedRank || p.finishedRank === 0));
+      const activePlayersCountBefore = activePlayersBefore.length;
+      const wasReverseCard = playedCard.type === 'reverse' || playedCard.type.includes('reverse');
+      const reverseAsSkip = wasReverseCard && activePlayersCountBefore === 2;
+
       // Execute card play in engine
-      const { unoPenalizedPlayers } = executePlayCard(gameState, playerIndex, cardId, chosenColor);
+      const { unoPenalizedPlayers, opponentDrawInfo } = executePlayCard(gameState, playerIndex, cardId, chosenColor);
 
       // Handle UNO penalty broadcast
       if (unoPenalizedPlayers && unoPenalizedPlayers.length > 0) {
@@ -262,6 +268,20 @@ export default function registerGameHandlers(io, socket) {
           io.in(room.roomCode).emit('uno_penalty', {
             username: p.username
           });
+        });
+      }
+
+      // Handle Opponent Auto Draw from reverse-as-skip draw cards
+      if (opponentDrawInfo) {
+        const targetSocket = io.sockets.sockets.get(opponentDrawInfo.socketId);
+        if (targetSocket) {
+          targetSocket.emit('cards_drawn_private', { cards: opponentDrawInfo.cards, isPenalty: true });
+        }
+        io.in(room.roomCode).emit('cards_drawn', {
+          username: opponentDrawInfo.username,
+          count: opponentDrawInfo.cards.length,
+          isPenalty: true,
+          wasEliminated: opponentDrawInfo.wasEliminated
         });
       }
 
@@ -321,7 +341,8 @@ export default function registerGameHandlers(io, socket) {
       io.in(room.roomCode).emit('card_played', {
         username: socket.user.username,
         card: playedCard,
-        currentColor: gameState.currentColor
+        currentColor: gameState.currentColor,
+        reverseAsSkip
       });
 
       // Handle newly eliminated players

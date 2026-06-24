@@ -64,17 +64,31 @@ export function getDrawRank(cardType) {
 }
 
 // Check if a card is playable
-export function canPlayCard(card, topCard, currentColor, penaltyStack) {
-  // If there's an active penalty stack, player MUST stack an equal or higher draw card
+export function canPlayCard(card, topCard, currentColor, penaltyStack, hand = []) {
+  // If there's an active penalty stack, player MUST stack an allowed draw card
   if (penaltyStack > 0) {
-    const cardRank = getDrawRank(card.type);
-    const topRank = getDrawRank(topCard.type);
-    return cardRank > 0 && cardRank >= topRank;
+    const topType = topCard.type;
+    if (topType === 'draw2') {
+      return card.type === 'draw2' || card.type === 'draw4';
+    } else if (topType === 'draw4' || topType === 'wild_reverse_draw4') {
+      return card.type === 'draw4';
+    } else if (topType === 'wild_draw6') {
+      return card.type === 'wild_draw6' || card.type === 'wild_draw10';
+    } else if (topType === 'wild_draw10') {
+      return card.type === 'wild_draw10';
+    }
+    return false;
   }
 
   // Otherwise, normal play rules
   if (card.color === 'Wild') {
-    return true;
+    // Wild cards should only be playable when the player has NO OTHER VALID PLAY available.
+    const isNormalCardPlayable = (c) => {
+      if (c.color === 'Wild') return false;
+      return c.color === currentColor || c.value === topCard.value;
+    };
+    const hasOtherValidPlay = hand.some(c => c.id !== card.id && isNormalCardPlayable(c));
+    return !hasOtherValidPlay;
   }
 
   return (
@@ -172,7 +186,10 @@ export function executePlayCard(gameState, playerIndex, cardId, chosenColor) {
   const card = player.hand[cardIdx];
   const topCard = gameState.discardPile[gameState.discardPile.length - 1];
 
-  if (!canPlayCard(card, topCard, gameState.currentColor, gameState.penaltyStack)) {
+  if (!canPlayCard(card, topCard, gameState.currentColor, gameState.penaltyStack, player.hand)) {
+    if (card.color === 'Wild') {
+      throw new Error('Wild cards can only be played when no other valid card is available.');
+    }
     throw new Error('Card is not playable.');
   }
 
@@ -190,7 +207,7 @@ export function executePlayCard(gameState, playerIndex, cardId, chosenColor) {
   }
 
   // 2. Apply special card effects
-  applyCardEffects(gameState, card, playerIndex, chosenColor);
+  const opponentDrawInfo = applyCardEffects(gameState, card, playerIndex, chosenColor);
 
   // 3. Update UNO status
   if (player.hand.length === 1) {
@@ -214,26 +231,63 @@ export function executePlayCard(gameState, playerIndex, cardId, chosenColor) {
     const playedAndFinished = player.hand.length === 0;
     // If player finished, they cannot get another turn even with skip_everyone
     if (playedAndFinished || card.type !== 'skip_everyone') {
-      const skipOffset = card.type === 'skip' ? 2 : 1;
+      const activePlayers = gameState.players.filter(p => !p.isEliminated && (!p.finishedRank || p.finishedRank === 0));
+      const activePlayersCount = activePlayers.length;
+      const isReverseAsSkip = (card.type === 'reverse' || card.type.includes('reverse')) && activePlayersCount === 2;
+      const skipOffset = (card.type === 'skip' || isReverseAsSkip) ? 2 : 1;
       gameState.turnIndex = getNextPlayerIndex(gameState, skipOffset);
     }
   }
 
   gameState.hasDrawnThisTurn = false;
-  return { gameState, unoPenalizedPlayers };
+  return { gameState, unoPenalizedPlayers, opponentDrawInfo };
 }
 
 // Apply special effects of cards
 function applyCardEffects(gameState, card, playerIndex, chosenColor) {
   const player = gameState.players[playerIndex];
+  let opponentDrawInfo = null;
 
   // 1. Reverse direction
   if (card.type === 'reverse' || card.type === 'wild_reverse_draw4') {
+    const activePlayers = gameState.players.filter(p => !p.isEliminated && (!p.finishedRank || p.finishedRank === 0));
+    const activePlayersCount = activePlayers.length;
+
     // In 2-player game, Reverse acts as a Skip
-    const activePlayersCount = gameState.players.filter(p => !p.isEliminated).length;
     if (activePlayersCount === 2) {
-      // Will advance an extra turn during turn advancement, acting as skip
-      card.type = 'skip'; 
+      // We still reverse the direction
+      gameState.direction *= -1;
+
+      // If the card has a draw value, the opponent must draw immediately
+      if (card.drawValue > 0 && gameState.penaltyStack > 0) {
+        const opponentIdx = getNextPlayerIndex(gameState, 1);
+        const opponent = gameState.players[opponentIdx];
+        const cards = [];
+        for (let i = 0; i < gameState.penaltyStack; i++) {
+          cards.push(drawCardFromDeck(gameState));
+        }
+        opponent.hand.push(...cards);
+
+        // Check mercy rule for the opponent
+        if (opponent.hand.length >= 25) {
+          opponent.isEliminated = true;
+          const N = gameState.players.length;
+          const eliminatedCount = gameState.players.filter(p => p.isEliminated).length;
+          opponent.finishedRank = N - eliminatedCount + 1;
+          gameState.discardPile.unshift(...opponent.hand);
+          opponent.hand = [];
+        }
+
+        gameState.penaltyStack = 0;
+
+        opponentDrawInfo = {
+          userId: opponent.userId,
+          username: opponent.username,
+          socketId: opponent.socketId,
+          cards,
+          wasEliminated: opponent.isEliminated
+        };
+      }
     } else {
       gameState.direction *= -1;
     }
@@ -273,6 +327,8 @@ function applyCardEffects(gameState, card, playerIndex, chosenColor) {
       chosenColor: chosenColor // The color the next player must search for
     };
   }
+
+  return opponentDrawInfo;
 }
 
 /// Executes a draw action (either resolves a penalty stack or tougher drawing)
@@ -344,7 +400,7 @@ export function executeDraw(gameState, playerIndex) {
 
   // Do NOT auto-play the card. Check if it is playable.
   const topCard = gameState.discardPile[gameState.discardPile.length - 1];
-  const isPlayable = canPlayCard(card, topCard, gameState.currentColor, 0) && !player.isEliminated;
+  const isPlayable = canPlayCard(card, topCard, gameState.currentColor, 0, player.hand) && !player.isEliminated;
 
   if (isPlayable) {
     // If playable, allow them to choose to play it or pass. Do NOT advance turn!

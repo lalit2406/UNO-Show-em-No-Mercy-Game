@@ -68,6 +68,7 @@ export default function PlayerHand({
   isMyTurn,
   playableCardIds,
   onPlayCard,
+  onPlayAttemptFailed,
   direction,
   currentColor,
   deckCount,
@@ -333,7 +334,12 @@ export default function PlayerHand({
 
   const handleDragStart = (e, card) => {
     const isPlayable = isMyTurn && playableCardIds.has(card.id);
-    if (!isPlayable) return; // Non-playable cards are not draggable
+    if (!isPlayable) {
+      if (card.color === 'Wild' && onPlayAttemptFailed) {
+        onPlayAttemptFailed(card);
+      }
+      return;
+    }
 
     setHoveredCardId(card.id); // Set hover/touch state immediately on touch/drag start
 
@@ -363,6 +369,9 @@ export default function PlayerHand({
   const handleCardClickOrTap = (card) => {
     const isPlayable = isMyTurn && playableCardIds.has(card.id);
     if (!isPlayable) {
+      if (card.color === 'Wild' && onPlayAttemptFailed) {
+        onPlayAttemptFailed(card);
+      }
       return;
     }
 
