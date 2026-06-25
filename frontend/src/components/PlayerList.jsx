@@ -19,7 +19,10 @@ export default function PlayerList({ players, hostId, currentUserId, onRemovePla
               <div className="w-9 h-9 rounded-full bg-slate-800 border border-slate-750 flex items-center justify-center font-black text-slate-300 flex-shrink-0">
                 {player.username[0].toUpperCase()}
               </div>
-              <span className="font-bold text-slate-200 truncate">{player.username}</span>
+              <span className="font-bold text-slate-200 truncate">
+                {player.username}
+                {player.status === 'offline' && <span className="text-red-500 text-xs font-medium ml-1.5 whitespace-nowrap">🔴 Offline</span>}
+              </span>
               {isHost && (
                 <span className="bg-yellow-500/15 text-yellow-500 border border-yellow-500/30 text-[10px] font-black uppercase px-2 py-0.5 rounded-full flex items-center gap-1 flex-shrink-0">
                   👑 Host

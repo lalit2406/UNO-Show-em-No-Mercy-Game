@@ -31,6 +31,11 @@ const roomSchema = new mongoose.Schema({
     isReady: {
       type: Boolean,
       default: false
+    },
+    status: {
+      type: String,
+      enum: ['online', 'offline'],
+      default: 'online'
     }
   }],
   status: {

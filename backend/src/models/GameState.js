@@ -66,6 +66,11 @@ const gameStateSchema = new mongoose.Schema({
     finishedRank: {
       type: Number,
       default: 0
+    },
+    status: {
+      type: String,
+      enum: ['online', 'offline'],
+      default: 'online'
     }
   }],
   turnIndex: {

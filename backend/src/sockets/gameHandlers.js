@@ -53,6 +53,150 @@ async function syncGameState(io, roomCode, roomId) {
   });
 }
 
+const turnTimeouts = new Map();
+
+function clearRoomTimeout(roomId) {
+  const key = roomId.toString();
+  if (turnTimeouts.has(key)) {
+    clearTimeout(turnTimeouts.get(key).timeoutId);
+    turnTimeouts.delete(key);
+  }
+}
+
+async function checkAndManageTurnTimeout(io, roomCode, roomId) {
+  try {
+    const room = await Room.findById(roomId);
+    if (!room || room.status !== 'active') {
+      clearRoomTimeout(roomId);
+      return;
+    }
+
+    const gameState = await GameState.findOne({ roomId });
+    if (!gameState || gameState.status !== 'playing') {
+      clearRoomTimeout(roomId);
+      return;
+    }
+
+    const currentPlayer = gameState.players[gameState.turnIndex];
+    if (!currentPlayer) return;
+
+    const isOffline = !currentPlayer.socketId || currentPlayer.status === 'offline';
+
+    if (!isOffline) {
+      clearRoomTimeout(roomId);
+      return;
+    }
+
+    const key = roomId.toString();
+    const activeTimeout = turnTimeouts.get(key);
+    if (activeTimeout && activeTimeout.userId === currentPlayer.userId.toString()) {
+      return;
+    }
+
+    if (activeTimeout) {
+      clearTimeout(activeTimeout.timeoutId);
+    }
+
+    io.in(roomCode).emit('log_message', { text: `Waiting for ${currentPlayer.username} to reconnect...` });
+
+    const timeoutId = setTimeout(async () => {
+      try {
+        await handleTurnTimeoutExpiry(io, roomCode, roomId, currentPlayer.userId);
+      } catch (err) {
+        logger.error('Error in turn timeout expiry:', err);
+      }
+    }, 20000);
+
+    turnTimeouts.set(key, {
+      timeoutId,
+      userId: currentPlayer.userId.toString(),
+      expiresAt: Date.now() + 20000
+    });
+
+  } catch (err) {
+    logger.error('Error in checkAndManageTurnTimeout:', err);
+  }
+}
+
+async function handleTurnTimeoutExpiry(io, roomCode, roomId, playerUserId) {
+  const room = await Room.findById(roomId);
+  if (!room || room.status !== 'active') return;
+
+  const gameState = await GameState.findOne({ roomId });
+  if (!gameState || gameState.status !== 'playing') return;
+
+  const currentPlayer = gameState.players[gameState.turnIndex];
+  if (!currentPlayer || currentPlayer.userId.toString() !== playerUserId.toString()) return;
+
+  const activeStack = gameState.penaltyStack;
+  const previousRanks = new Map(gameState.players.map(p => [p.userId.toString(), p.finishedRank || 0]));
+  const eliminatedBefore = new Set(gameState.players.filter(p => p.isEliminated).map(p => p.userId.toString()));
+
+  const { cardsDrawn, unoPenalizedPlayers } = executeDraw(gameState, gameState.turnIndex);
+
+  if (gameState.hasDrawnThisTurn) {
+    gameState.hasDrawnThisTurn = false;
+    gameState.turnIndex = getNextPlayerIndex(gameState, 1);
+  }
+
+  gameState.players.forEach(p => {
+    const prev = previousRanks.get(p.userId.toString()) || 0;
+    if (p.finishedRank > 0 && prev === 0) {
+      io.in(roomCode).emit('player_finished', {
+        username: p.username,
+        rank: p.finishedRank
+      });
+    }
+  });
+
+  if (gameState.status === 'finished') {
+    room.status = 'finished';
+    await room.save();
+
+    const winner = await User.findById(gameState.winner);
+    if (winner && !winner.isGuest) {
+      winner.stats.gamesWon += 1;
+      await winner.save();
+    }
+
+    for (const p of gameState.players) {
+      const user = await User.findById(p.userId);
+      if (user && !user.isGuest) {
+        user.stats.gamesPlayed += 1;
+        if (p.isEliminated) {
+          user.stats.eliminations += 1;
+        }
+        await user.save();
+      }
+    }
+
+    await gameState.save();
+    io.in(roomCode).emit('game_over', { winnerUsername: winner ? winner.username : 'Guest' });
+  } else {
+    await gameState.save();
+  }
+
+  turnTimeouts.delete(roomId.toString());
+
+  io.in(roomCode).emit('cards_drawn', {
+    username: currentPlayer.username,
+    count: cardsDrawn.length,
+    isPenalty: activeStack > 0,
+    wasEliminated: currentPlayer.isEliminated
+  });
+
+  gameState.players.forEach(p => {
+    if (p.isEliminated && !eliminatedBefore.has(p.userId.toString())) {
+      io.in(roomCode).emit('player_eliminated', { username: p.username });
+    }
+  });
+
+  await syncGameState(io, roomCode, room._id);
+
+  await checkAndManageTurnTimeout(io, roomCode, room._id);
+}
+
+
 // Generate a unique room code
 async function generateUniqueRoomCode() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -96,35 +240,74 @@ export default function registerGameHandlers(io, socket) {
   });
 
   // 2. Join Room
-  socket.on('join_room', async ({ roomCode }) => {
+  socket.on('join_room', async ({ roomCode, username }) => {
     try {
       const upperCode = roomCode.trim().toUpperCase();
-      const room = await Room.findOne({ roomCode: upperCode, status: 'lobby' });
+      const userToJoin = username ? username.trim() : socket.user.username;
+      
+      const room = await Room.findOne({ roomCode: upperCode, status: { $in: ['lobby', 'active'] } });
 
       if (!room) {
-        return socket.emit('error_message', 'Room not found or game already started.');
+        return socket.emit('error_message', 'Room not found.');
       }
 
-      if (room.players.length >= room.maxPlayers) {
+      const existingPlayer = room.players.find(p => p.username.toLowerCase() === userToJoin.toLowerCase());
+
+      if (room.status === 'active') {
+        if (!existingPlayer) {
+          return socket.emit('error_message', 'Game already started.');
+        }
+        if (existingPlayer.status === 'online' && existingPlayer.socketId) {
+          return socket.emit('error_message', 'This player is already online in the match.');
+        }
+      }
+
+      if (!existingPlayer && room.players.length >= room.maxPlayers) {
         return socket.emit('error_message', 'Lobby is full.');
       }
 
-      const existingPlayer = room.players.find(p => p.userId.toString() === socket.user.id.toString());
       if (!existingPlayer) {
         room.players.push({
           userId: socket.user.id,
-          username: socket.user.username,
+          username: userToJoin,
           socketId: socket.id,
-          isReady: false
+          isReady: false,
+          status: 'online'
         });
       } else {
+        // Adopt the identity of the existing player (critical for re-mapping their socket user to their original userId)
+        socket.user.id = existingPlayer.userId.toString();
         existingPlayer.socketId = socket.id;
+        existingPlayer.status = 'online';
       }
 
       await room.save();
       socket.join(upperCode);
 
+      // Print reconnection and session restoration logs if active
+      if (room.status === 'active' && existingPlayer) {
+        const gameState = await GameState.findOne({ roomId: room._id });
+        if (gameState) {
+          const gamePlayer = gameState.players.find(p => p.userId.toString() === existingPlayer.userId.toString());
+          if (gamePlayer) {
+            gamePlayer.socketId = socket.id;
+            gamePlayer.status = 'online';
+            await gameState.save();
+
+            console.log(`[MANUAL REJOIN]\nusername: ${existingPlayer.username}\nroom: ${room.roomCode}`);
+            const position = gameState.players.findIndex(p => p.userId.toString() === existingPlayer.userId.toString());
+            console.log(`[PLAYER RESTORED]\ncards: ${gamePlayer.hand.length}\nseat: ${position}\nturn: ${gameState.turnIndex}`);
+          }
+        }
+      }
+
       io.in(upperCode).emit('room_updated', room);
+      
+      if (room.status === 'active') {
+        await syncGameState(io, room.roomCode, room._id);
+        // Clear turn timeout if active for this player
+        await checkAndManageTurnTimeout(io, room.roomCode, room._id);
+      }
     } catch (err) {
       logger.error('Error joining room', err);
       socket.emit('error_message', 'Could not join room.');
@@ -215,6 +398,7 @@ export default function registerGameHandlers(io, socket) {
       });
 
       await syncGameState(io, room.roomCode, room._id);
+      await checkAndManageTurnTimeout(io, room.roomCode, room._id);
     } catch (err) {
       logger.error('Error starting game', err);
       socket.emit('error_message', 'Failed to start game.');
@@ -354,6 +538,7 @@ export default function registerGameHandlers(io, socket) {
 
       // Synchronize modified states to all players securely
       await syncGameState(io, room.roomCode, room._id);
+      await checkAndManageTurnTimeout(io, room.roomCode, room._id);
     } catch (err) {
       logger.error('Error playing card', err);
       socket.emit('error_message', err.message || 'Failed to play card.');
@@ -461,6 +646,7 @@ export default function registerGameHandlers(io, socket) {
       });
 
       await syncGameState(io, room.roomCode, room._id);
+      await checkAndManageTurnTimeout(io, room.roomCode, room._id);
     } catch (err) {
       logger.error('Error drawing card', err);
       socket.emit('error_message', err.message || 'Failed to draw card.');
@@ -595,6 +781,8 @@ export default function registerGameHandlers(io, socket) {
 
       // Synchronize fresh game state to all players
       await syncGameState(io, room.roomCode, room._id);
+      clearRoomTimeout(room._id);
+      await checkAndManageTurnTimeout(io, room.roomCode, room._id);
     } catch (err) {
       logger.error('Error restarting game', err);
       socket.emit('error_message', 'Failed to restart the game.');
@@ -696,6 +884,7 @@ export default function registerGameHandlers(io, socket) {
       if (wasGameActive) {
         // Sync fresh game state to all remaining players
         await syncGameState(io, room.roomCode, room._id);
+        await checkAndManageTurnTimeout(io, room.roomCode, room._id);
       } else {
         // Sync room data for lobby
         io.in(room.roomCode).emit('room_updated', room);
@@ -704,6 +893,141 @@ export default function registerGameHandlers(io, socket) {
     } catch (err) {
       logger.error('Error removing player', err);
       socket.emit('error_message', 'Failed to remove player.');
+    }
+  });
+
+  // 10. Voluntary Leave Room
+  socket.on('leave_room', async () => {
+    try {
+      const room = await Room.findOne({ 'players.userId': socket.user.id, $or: [{ status: 'lobby' }, { status: 'active' }] });
+      if (!room) return;
+
+      const userId = socket.user.id;
+      const targetPlayer = room.players.find(p => p.userId.toString() === userId.toString());
+      if (!targetPlayer) return;
+
+      const targetUsername = targetPlayer.username;
+
+      // Remove player from room players list
+      room.players = room.players.filter(p => p.userId.toString() !== userId.toString());
+
+      // If they were the host, migrate host to next player
+      if (room.host.toString() === userId.toString()) {
+        if (room.players.length > 0) {
+          room.host = room.players[0].userId;
+        } else {
+          room.status = 'finished';
+        }
+      }
+
+      let wasGameActive = room.status === 'active';
+      let gameState = null;
+
+      if (wasGameActive && room.gameState) {
+        gameState = await GameState.findById(room.gameState);
+        if (gameState && gameState.status !== 'finished') {
+          const gamePlayerIdx = gameState.players.findIndex(p => p.userId.toString() === userId.toString());
+          if (gamePlayerIdx !== -1) {
+            const isCurrentTurn = gameState.turnIndex === gamePlayerIdx;
+
+            // Remove player from game state players list (and their cards implicitly)
+            gameState.players.splice(gamePlayerIdx, 1);
+
+            // If the player was the current turn, shift turn
+            if (isCurrentTurn && gameState.players.length > 0) {
+              if (gameState.turnIndex >= gameState.players.length) {
+                gameState.turnIndex = 0;
+              }
+              // Advance to the next active player if needed
+              let attempts = 0;
+              while (
+                (gameState.players[gameState.turnIndex].isEliminated || gameState.players[gameState.turnIndex].finishedRank > 0) &&
+                attempts < gameState.players.length
+              ) {
+                gameState.turnIndex = (gameState.turnIndex + 1) % gameState.players.length;
+                attempts++;
+              }
+            } else if (gameState.turnIndex > gamePlayerIdx) {
+              // Adjust turnIndex because elements shifted left
+              gameState.turnIndex--;
+            }
+
+            // Check if game status waiting for roulette is affected
+            if (gameState.status === 'roulette_waiting' && gameState.actionData) {
+              const { rouletteTargetIndex } = gameState.actionData;
+              if (rouletteTargetIndex === gamePlayerIdx) {
+                gameState.status = 'playing';
+                gameState.actionData = {};
+              } else if (rouletteTargetIndex > gamePlayerIdx) {
+                gameState.actionData.rouletteTargetIndex--;
+              }
+            }
+
+            // Check win/finished condition
+            checkMercyRule(gameState);
+
+            if (gameState.status === 'finished') {
+              room.status = 'finished';
+            }
+
+            await gameState.save();
+          }
+        }
+      }
+
+      await room.save();
+      socket.leave(room.roomCode);
+
+      // Broadcast event to remaining players
+      io.in(room.roomCode).emit('player_left', { username: targetUsername });
+
+      if (wasGameActive) {
+        await syncGameState(io, room.roomCode, room._id);
+        await checkAndManageTurnTimeout(io, room.roomCode, room._id);
+      } else {
+        io.in(room.roomCode).emit('room_updated', room);
+      }
+    } catch (err) {
+      logger.error('Error leaving room', err);
+    }
+  });
+
+  // 11. Disconnect Hook
+  socket.on('disconnect', async () => {
+    try {
+      if (!socket.user || !socket.user.id) return;
+
+      const rooms = await Room.find({ 'players.userId': socket.user.id, status: { $ne: 'finished' } });
+      for (const room of rooms) {
+        const player = room.players.find(p => p.userId.toString() === socket.user.id.toString());
+        if (player) {
+          player.socketId = null;
+          player.status = 'offline';
+          await room.save();
+
+          console.log(`[PLAYER DISCONNECTED]\nusername: ${player.username}\nroom: ${room.roomCode}`);
+
+          if (room.status === 'active' && room.gameState) {
+            const gameState = await GameState.findById(room.gameState);
+            if (gameState) {
+              const gamePlayer = gameState.players.find(p => p.userId.toString() === socket.user.id.toString());
+              if (gamePlayer) {
+                gamePlayer.socketId = null;
+                gamePlayer.status = 'offline';
+                await gameState.save();
+              }
+              // Sync updated state (marked offline) to remaining online players
+              await syncGameState(io, room.roomCode, room._id);
+              // Trigger turn timeout skip engine if the disconnected player's turn was active
+              await checkAndManageTurnTimeout(io, room.roomCode, room._id);
+            }
+          } else {
+            io.in(room.roomCode).emit('room_updated', room);
+          }
+        }
+      }
+    } catch (err) {
+      logger.error('Error in socket disconnect handler:', err);
     }
   });
 }

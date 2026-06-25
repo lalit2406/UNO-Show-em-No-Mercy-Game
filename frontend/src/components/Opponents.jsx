@@ -89,6 +89,12 @@ export default function Opponents({ players, currentTurnIndex, myUserId, isHost,
                 )}
               </div>
               
+              {opponent.status === 'offline' && !isFinished && (
+                <span className="text-[9px] sm:text-xs font-black text-red-500 uppercase tracking-widest mt-0.5 animate-pulse">
+                  🔴 Offline
+                </span>
+              )}
+
               {isEliminated && (
                 <span className="text-[9px] sm:text-xs font-black text-red-500 uppercase tracking-widest mt-0.5">
                   💀 <span className="sm:inline hidden">Eliminated</span>

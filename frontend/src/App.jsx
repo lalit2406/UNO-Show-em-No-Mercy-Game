@@ -40,12 +40,17 @@ function MainApp() {
       
       // Identify current player using username
       const me = room.players.find(p => p.username === username);
+
       if (me) {
         setCurrentPlayer(me);
       }
 
       setLoadingState('');
-      setCurrentView('lobby');
+      if (room.status === 'active') {
+        setCurrentView('game');
+      } else {
+        setCurrentView('lobby');
+      }
     };
 
     const handleGameStarted = (data) => {
@@ -123,6 +128,9 @@ function MainApp() {
   };
 
   const handleLeave = () => {
+    if (socket) {
+      socket.emit('leave_room');
+    }
     disconnectSocket();
     setCurrentRoom(null);
     setCurrentGameState(null);

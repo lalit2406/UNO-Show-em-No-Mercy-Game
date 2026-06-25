@@ -428,6 +428,14 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
       setTimeout(() => setErrorMessage(null), 4500);
     };
 
+    const handleLogMessage = ({ text }) => {
+      addLog(text);
+    };
+
+    const handlePlayerLeft = ({ username }) => {
+      addLog(`🚪 ${username} left the match.`);
+    };
+
     socket.on('game_state_sync', handleSync);
     socket.on('cards_drawn_private', handlePrivateDrawn);
     socket.on('card_played', handleCardPlayed);
@@ -440,6 +448,8 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
     socket.on('uno_penalty', handleUnoPenalty);
     socket.on('player_finished', handlePlayerFinished);
     socket.on('player_removed', handlePlayerRemoved);
+    socket.on('log_message', handleLogMessage);
+    socket.on('player_left', handlePlayerLeft);
 
     return () => {
       socket.off('game_state_sync', handleSync);
@@ -454,6 +464,8 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
       socket.off('uno_penalty', handleUnoPenalty);
       socket.off('player_finished', handlePlayerFinished);
       socket.off('player_removed', handlePlayerRemoved);
+      socket.off('log_message', handleLogMessage);
+      socket.off('player_left', handlePlayerLeft);
       if (privateDrawnTimerRef.current) {
         clearTimeout(privateDrawnTimerRef.current);
       }
@@ -829,7 +841,7 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
                       <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">
                         <span className="text-slate-500 text-xs">👤</span>
                         <span className={`truncate font-medium ${isCurrentTurn ? 'text-red-400 font-bold' : 'text-slate-200'}`} title={opponent.username}>
-                          {opponent.username}
+                          {opponent.username} {opponent.status === 'offline' && '🔴 Offline'}
                         </span>
                         {isUno && !isEliminated && (
                           <span className="text-[10px] font-black bg-red-600 text-white px-1.5 py-0.5 rounded animate-pulse tracking-wide flex items-center gap-0.5 flex-shrink-0">
