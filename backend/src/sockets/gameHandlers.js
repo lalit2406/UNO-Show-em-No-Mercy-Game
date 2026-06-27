@@ -129,10 +129,11 @@ async function handleTurnTimeoutExpiry(io, roomCode, roomId, playerUserId) {
   if (!currentPlayer || currentPlayer.userId.toString() !== playerUserId.toString()) return;
 
   const activeStack = gameState.penaltyStack;
+  const activeRouletteStack = gameState.pendingRouletteStack || 0;
   const previousRanks = new Map(gameState.players.map(p => [p.userId.toString(), p.finishedRank || 0]));
   const eliminatedBefore = new Set(gameState.players.filter(p => p.isEliminated).map(p => p.userId.toString()));
 
-  const { cardsDrawn, unoPenalizedPlayers } = executeDraw(gameState, gameState.turnIndex);
+  const { cardsDrawn, unoPenalizedPlayers, rouletteResolutions } = executeDraw(gameState, gameState.turnIndex);
 
   if (gameState.hasDrawnThisTurn) {
     gameState.hasDrawnThisTurn = false;
@@ -181,9 +182,19 @@ async function handleTurnTimeoutExpiry(io, roomCode, roomId, playerUserId) {
   io.in(roomCode).emit('cards_drawn', {
     username: currentPlayer.username,
     count: cardsDrawn.length,
-    isPenalty: activeStack > 0,
+    isPenalty: activeStack > 0 || activeRouletteStack > 0,
     wasEliminated: currentPlayer.isEliminated
   });
+
+  if (rouletteResolutions && rouletteResolutions.length > 0) {
+    rouletteResolutions.forEach(res => {
+      io.in(roomCode).emit('roulette_resolved', {
+        username: currentPlayer.username,
+        color: res.color,
+        drawCount: res.drawCount
+      });
+    });
+  }
 
   gameState.players.forEach(p => {
     if (p.isEliminated && !eliminatedBefore.has(p.userId.toString())) {
@@ -561,10 +572,11 @@ export default function registerGameHandlers(io, socket) {
 
       const previousRanks = new Map(gameState.players.map(p => [p.userId.toString(), p.finishedRank || 0]));
       const activeStack = gameState.penaltyStack;
+      const activeRouletteStack = gameState.pendingRouletteStack || 0;
       const eliminatedBefore = new Set(gameState.players.filter(p => p.isEliminated).map(p => p.userId.toString()));
 
       // Execute draw operation (handles tougher drawing or stack drawing)
-      const { cardsDrawn, unoPenalizedPlayers } = executeDraw(gameState, playerIndex);
+      const { cardsDrawn, unoPenalizedPlayers, rouletteResolutions } = executeDraw(gameState, playerIndex);
 
       const drawnCount = cardsDrawn.length;
       const player = gameState.players[playerIndex];
@@ -628,15 +640,25 @@ export default function registerGameHandlers(io, socket) {
       }
 
       // Notify client who drew cards about the cards they got
-      socket.emit('cards_drawn_private', { cards: cardsDrawn, isPenalty: activeStack > 0 });
+      socket.emit('cards_drawn_private', { cards: cardsDrawn, isPenalty: activeStack > 0 || activeRouletteStack > 0 });
 
       // Notify other room players about drawing action
       io.in(room.roomCode).emit('cards_drawn', {
         username: socket.user.username,
         count: drawnCount,
-        isPenalty: activeStack > 0,
+        isPenalty: activeStack > 0 || activeRouletteStack > 0,
         wasEliminated: player.isEliminated
       });
+
+      if (rouletteResolutions && rouletteResolutions.length > 0) {
+        rouletteResolutions.forEach(res => {
+          io.in(room.roomCode).emit('roulette_resolved', {
+            username: player.username,
+            color: res.color,
+            drawCount: res.drawCount
+          });
+        });
+      }
 
       // Handle newly eliminated players
       gameState.players.forEach(p => {

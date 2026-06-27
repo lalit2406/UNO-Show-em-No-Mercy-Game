@@ -64,14 +64,21 @@ export function getDrawRank(cardType) {
 }
 
 // Check if a card is playable
-export function canPlayCard(card, topCard, currentColor, penaltyStack, hand = []) {
+export function canPlayCard(card, topCard, currentColor, penaltyStack, hand = [], pendingRouletteStack = 0) {
+  // If there's an active roulette stack, player MUST stack another wild color roulette card
+  if (pendingRouletteStack > 0) {
+    return card.type === 'wild_color_roulette';
+  }
+
   // If there's an active penalty stack, player MUST stack an allowed draw card
   if (penaltyStack > 0) {
     const topType = topCard.type;
     if (topType === 'draw2') {
       return card.type === 'draw2' || card.type === 'draw4';
-    } else if (topType === 'draw4' || topType === 'wild_reverse_draw4') {
+    } else if (topType === 'draw4') {
       return card.type === 'draw4';
+    } else if (topType === 'wild_reverse_draw4') {
+      return card.type === 'wild_reverse_draw4' || card.type === 'wild_draw6' || card.type === 'wild_draw10';
     } else if (topType === 'wild_draw6') {
       return card.type === 'wild_draw6' || card.type === 'wild_draw10';
     } else if (topType === 'wild_draw10') {
@@ -186,7 +193,7 @@ export function executePlayCard(gameState, playerIndex, cardId, chosenColor) {
   const card = player.hand[cardIdx];
   const topCard = gameState.discardPile[gameState.discardPile.length - 1];
 
-  if (!canPlayCard(card, topCard, gameState.currentColor, gameState.penaltyStack, player.hand)) {
+  if (!canPlayCard(card, topCard, gameState.currentColor, gameState.penaltyStack, player.hand, gameState.pendingRouletteStack || 0)) {
     if (card.color === 'Wild') {
       throw new Error('Wild cards can only be played when no other valid card is available.');
     }
@@ -303,29 +310,11 @@ function applyCardEffects(gameState, card, playerIndex, chosenColor) {
 
   // 3. Wild Color Roulette
   if (card.type === 'wild_color_roulette') {
-    let nextPlayerIndex = getNextPlayerIndex(gameState, 1);
-    const currentPlayer = gameState.players[playerIndex];
-    let targetPlayer = gameState.players[nextPlayerIndex];
-
-    if (targetPlayer && currentPlayer && targetPlayer.userId.toString() === currentPlayer.userId.toString()) {
-      console.error('[Roulette Setup Error] Target player matches current player. Finding next valid active player.');
-      let offset = 2;
-      while (offset <= gameState.players.length) {
-        const potentialIndex = getNextPlayerIndex(gameState, offset);
-        const potentialPlayer = gameState.players[potentialIndex];
-        if (potentialPlayer.userId.toString() !== currentPlayer.userId.toString() && !potentialPlayer.isEliminated && (!potentialPlayer.finishedRank || potentialPlayer.finishedRank === 0)) {
-          nextPlayerIndex = potentialIndex;
-          break;
-        }
-        offset++;
-      }
+    gameState.pendingRouletteStack = (gameState.pendingRouletteStack || 0) + 1;
+    if (!gameState.pendingRouletteColors) {
+      gameState.pendingRouletteColors = [];
     }
-
-    gameState.status = 'roulette_waiting';
-    gameState.actionData = {
-      rouletteTargetIndex: nextPlayerIndex,
-      chosenColor: chosenColor // The color the next player must search for
-    };
+    gameState.pendingRouletteColors.push(chosenColor);
   }
 
   return opponentDrawInfo;
@@ -348,12 +337,60 @@ export function executeDraw(gameState, playerIndex) {
   }
 
   // Case A: PASS ACTION (If the player already drew a playable card this turn, drawing again acts as a Pass)
-  if (gameState.hasDrawnThisTurn && gameState.penaltyStack === 0) {
+  if (gameState.hasDrawnThisTurn && gameState.penaltyStack === 0 && (gameState.pendingRouletteStack || 0) === 0) {
     gameState.hasDrawnThisTurn = false;
     if (gameState.status === 'playing') {
       gameState.turnIndex = getNextPlayerIndex(gameState, 1);
     }
     return { gameState, cardsDrawn: [], unoPenalizedPlayers };
+  }
+
+  // Case B1: Resolving a pending roulette stack
+  if (gameState.pendingRouletteStack > 0) {
+    const cardsDrawn = [];
+    const colorsToMatch = gameState.pendingRouletteColors || [];
+    const rouletteResolutions = [];
+
+    for (const colorToMatch of colorsToMatch) {
+      if (player.isEliminated || player.hand.length >= 25) {
+        break;
+      }
+
+      let colorMatched = false;
+      let drawCountForThisColor = 0;
+      while (!colorMatched && !player.isEliminated && player.hand.length < 25) {
+        const card = drawCardFromDeck(gameState);
+        cardsDrawn.push(card);
+        player.hand.push(card);
+        drawCountForThisColor++;
+
+        if (player.hand.length !== 1) {
+          player.needsUnoCall = false;
+          player.hasCalledUno = false;
+        }
+
+        if (card.color === colorToMatch) {
+          colorMatched = true;
+        }
+      }
+      rouletteResolutions.push({
+        color: colorToMatch,
+        drawCount: drawCountForThisColor
+      });
+    }
+
+    // Reset the stack
+    gameState.pendingRouletteStack = 0;
+    gameState.pendingRouletteColors = [];
+
+    checkMercyRule(gameState);
+
+    // End turn of the player who drew the penalties
+    if (gameState.status === 'playing') {
+      gameState.turnIndex = getNextPlayerIndex(gameState, 1);
+    }
+
+    return { gameState, cardsDrawn, unoPenalizedPlayers, rouletteResolutions };
   }
 
   // Case B: Resolving a penalty stack

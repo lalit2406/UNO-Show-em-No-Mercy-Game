@@ -95,6 +95,14 @@ const gameStateSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  pendingRouletteStack: {
+    type: Number,
+    default: 0
+  },
+  pendingRouletteColors: {
+    type: [String],
+    default: []
+  },
   status: {
     type: String,
     enum: ['playing', 'roulette_waiting', 'finished'],

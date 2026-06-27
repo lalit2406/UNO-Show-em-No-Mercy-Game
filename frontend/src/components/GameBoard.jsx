@@ -573,14 +573,22 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
   // Helper to pre-calculate playable cards in player hand
   const playableCardIds = new Set();
   if (myPlayerState && !myPlayerState.isEliminated) {
-    if (gameState.penaltyStack > 0) {
+    if (gameState.pendingRouletteStack > 0) {
+      myPlayerState.hand.forEach(card => {
+        if (card.type === 'wild_color_roulette') {
+          playableCardIds.add(card.id);
+        }
+      });
+    } else if (gameState.penaltyStack > 0) {
       myPlayerState.hand.forEach(card => {
         const topType = topCard.type;
         let isPlayable = false;
         if (topType === 'draw2') {
           isPlayable = card.type === 'draw2' || card.type === 'draw4';
-        } else if (topType === 'draw4' || topType === 'wild_reverse_draw4') {
+        } else if (topType === 'draw4') {
           isPlayable = card.type === 'draw4';
+        } else if (topType === 'wild_reverse_draw4') {
+          isPlayable = card.type === 'wild_reverse_draw4' || card.type === 'wild_draw6' || card.type === 'wild_draw10';
         } else if (topType === 'wild_draw6') {
           isPlayable = card.type === 'wild_draw6' || card.type === 'wild_draw10';
         } else if (topType === 'wild_draw10') {
@@ -915,15 +923,23 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
             })()}
           </div>
 
-          {gameState.penaltyStack > 0 && (
+          {(gameState.penaltyStack > 0 || gameState.pendingRouletteStack > 0) && (
             <div className="p-3 bg-red-950/80 border border-red-800/60 rounded-xl flex flex-col items-center justify-center text-center animate-pulse">
-              <span className="text-[10px] font-black tracking-widest text-red-500 uppercase">Penalty Stack</span>
-              <span className="text-2xl font-black text-red-400">+{gameState.penaltyStack} Cards</span>
+              <span className="text-[10px] font-black tracking-widest text-red-500 uppercase">
+                {gameState.pendingRouletteStack > 0 ? 'Roulette Stack' : 'Penalty Stack'}
+              </span>
+              <span className="text-2xl font-black text-red-400">
+                {gameState.pendingRouletteStack > 0 ? `+${gameState.pendingRouletteStack} Roulette` : `+${gameState.penaltyStack} Cards`}
+              </span>
               <span className="text-[9px] text-slate-400 mt-1">
                 {(() => {
+                  if (gameState.pendingRouletteStack > 0) {
+                    return 'Stack Wild Color Roulette!';
+                  }
                   const topType = topCard?.type;
                   if (topType === 'draw2') return 'Stack Draw 2 or Draw 4!';
-                  if (topType === 'draw4' || topType === 'wild_reverse_draw4') return 'Stack Draw 4!';
+                  if (topType === 'draw4') return 'Stack Draw 4!';
+                  if (topType === 'wild_reverse_draw4') return 'Stack Wild Rev Draw 4, Draw 6 or 10!';
                   if (topType === 'wild_draw6') return 'Stack Wild Draw 6 or Draw 10!';
                   if (topType === 'wild_draw10') return 'Stack Wild Draw 10!';
                   return 'Stack allowed DRAW card!';
@@ -957,12 +973,12 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
                     Pass
                   </span>
                 )}
-                {isMyTurn && !gameState.hasDrawnThisTurn && gameState.penaltyStack === 0 && (
+                {isMyTurn && !gameState.hasDrawnThisTurn && gameState.penaltyStack === 0 && (gameState.pendingRouletteStack || 0) === 0 && (
                   <span className="absolute -bottom-7 left-1/2 transform -translate-x-1/2 bg-emerald-500 text-black font-black text-[10px] px-2 py-0.5 rounded-full animate-bounce">
                     Draw
                   </span>
                 )}
-                {isMyTurn && !gameState.hasDrawnThisTurn && gameState.penaltyStack > 0 && (
+                {isMyTurn && !gameState.hasDrawnThisTurn && (gameState.penaltyStack > 0 || (gameState.pendingRouletteStack || 0) > 0) && (
                   <span className="absolute -bottom-7 left-1/2 transform -translate-x-1/2 bg-red-600 text-white font-black text-[10px] px-2 py-0.5 rounded-full animate-bounce">
                     TAKE PENALTY
                   </span>
