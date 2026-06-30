@@ -291,8 +291,10 @@ export default function GameBoard({ roomCode, myUserId, onLeaveRoom }) {
       if (card.drawValue > 0) {
         if (card.type === 'draw2') {
           addLog('Penalty Stack Active: Only Draw 2 or Draw 4 may be played.');
-        } else if (card.type === 'draw4' || card.type === 'wild_reverse_draw4') {
+        } else if (card.type === 'draw4') {
           addLog('Penalty Stack Active: Only Draw 4 may be played.');
+        } else if (card.type === 'wild_reverse_draw4') {
+          addLog('Penalty Stack Active: Only Wild Reverse Draw 4, Draw 6 or Draw 10 may be played.');
         } else if (card.type === 'wild_draw6') {
           addLog('Penalty Stack Active: Only Wild Draw 6 or Wild Draw 10 may be played.');
         } else if (card.type === 'wild_draw10') {

@@ -240,7 +240,7 @@ export function executePlayCard(gameState, playerIndex, cardId, chosenColor) {
     if (playedAndFinished || card.type !== 'skip_everyone') {
       const activePlayers = gameState.players.filter(p => !p.isEliminated && (!p.finishedRank || p.finishedRank === 0));
       const activePlayersCount = activePlayers.length;
-      const isReverseAsSkip = (card.type === 'reverse' || card.type.includes('reverse')) && activePlayersCount === 2;
+      const isReverseAsSkip = card.type === 'reverse' && activePlayersCount === 2;
       const skipOffset = (card.type === 'skip' || isReverseAsSkip) ? 2 : 1;
       gameState.turnIndex = getNextPlayerIndex(gameState, skipOffset);
     }
@@ -265,8 +265,8 @@ function applyCardEffects(gameState, card, playerIndex, chosenColor) {
       // We still reverse the direction
       gameState.direction *= -1;
 
-      // If the card has a draw value, the opponent must draw immediately
-      if (card.drawValue > 0 && gameState.penaltyStack > 0) {
+      // If the card has a draw value, the opponent must draw immediately (except for Wild Reverse Draw 4)
+      if (card.drawValue > 0 && gameState.penaltyStack > 0 && card.type !== 'wild_reverse_draw4') {
         const opponentIdx = getNextPlayerIndex(gameState, 1);
         const opponent = gameState.players[opponentIdx];
         const cards = [];
